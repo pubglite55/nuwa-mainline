@@ -1245,3 +1245,44 @@
 		status = "okay";
 	};
 };
+
+&i2c8 {
+	status = "okay";
+
+	cs35l41@40 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x40>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <99 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&tlmm 183 GPIO_ACTIVE_LOW>;
+
+		cirrus,fast-switch = "B-music.txt", "B-handfree.txt";
+		sound-name-prefix = "B";
+		cirrus,right-channel-amp;
+		cirrus,asp-sdout-hiz = <0x03>;
+		cirrus,boost-cap-microfarad = <0x0f>;
+		cirrus,boost-ind-nanohenry = <0x3e8>;
+		cirrus,boost-peak-milliamp = <0xfa0>;
+		cirrus,temp-warn_threshold = <0x03>;
+
+		status = "okay";
+	};
+
+	cs35l41@42 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x42>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <98 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&tlmm 182 GPIO_ACTIVE_LOW>;
+
+		cirrus,fast-switch = "T-music.txt", "T-handset.txt", "T-handfree.txt";
+		sound-name-prefix = "T";
+		cirrus,asp-sdout-hiz = <0x03>;
+		cirrus,boost-cap-microfarad = <0x0f>;
+		cirrus,boost-ind-nanohenry = <0x3e8>;
+		cirrus,boost-peak-milliamp = <0xfa0>;
+		cirrus,temp-warn_threshold = <0x03>;
+
+		status = "okay";
+	};
+};
