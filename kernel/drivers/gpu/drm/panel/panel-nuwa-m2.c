@@ -114,9 +114,10 @@ static int nuwa_panel_probe(struct mipi_dsi_device *dsi)
 	struct nuwa_panel *ctx;
 	int ret;
 
-	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
+	ctx = devm_drm_panel_alloc(dev, struct nuwa_panel, panel,
+				   &nuwa_panel_funcs, DRM_MODE_CONNECTOR_DSI);
+	if (IS_ERR(ctx))
+		return PTR_ERR(ctx);
 
 	ctx->supplies[0].supply = "vci";
 	ctx->supplies[1].supply = "vdd";
@@ -134,7 +135,6 @@ static int nuwa_panel_probe(struct mipi_dsi_device *dsi)
 	ctx->dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_NO_EOT_PACKET;
 	ctx->dsi->format = MIPI_DSI_FMT_RGB888;
 
-	drm_panel_init(&ctx->panel, dev, &nuwa_panel_funcs, DRM_MODE_CONNECTOR_DSI);
 	drm_panel_add(&ctx->panel);
 	dev_set_drvdata(dev, ctx);
 	return 0;
