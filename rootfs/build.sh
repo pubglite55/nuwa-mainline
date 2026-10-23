@@ -19,7 +19,7 @@ mmdebstrap \
   --arch="$ARCH" \
   --variant=important \
   --components=main,universe,restricted \
-  --include=systemd,systemd-sysv,initramfs-tools,munin-common,ca-certificates,openssh-server,network-manager,ubuntu-desktop-minimal,linux-firmware \
+  --include=systemd,systemd-sysv,initramfs-tools,ca-certificates,openssh-server,network-manager,ubuntu-desktop-minimal,linux-firmware \
   "$SUITE" "$OUT/rootfs.tar" "$MIRROR"
 
 zstd -T0 -19 -f "$OUT/rootfs.tar" -o "$OUT/rootfs.tar.zst"
