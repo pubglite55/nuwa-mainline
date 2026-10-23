@@ -1,5 +1,6 @@
 #!/bin/busybox sh
-/bin/busybox --install -s
+mkdir -p /sbin /usr/bin /usr/sbin /bin
+/bin/busybox --install -s /bin /sbin /usr/bin /usr/sbin
 
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
