@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev \
+            cpio kmod device-tree-compiler python3 ccache zstd
+      - name: 构建内核
+        run: |
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          ./kernel/build.sh
+      - name: 上传内核产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-artifacts
+          path: |
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/arch/arm64/boot/dts/qcom/*.dtb
+          if-no-files-found: warn
+
+  rootfs:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mmdebstrap qemu-user-static binfmt-support zstd
+      - name: 构建根文件系统
+        run: |
+          ./rootfs/build.sh
+      - name: 上传根文件系统产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-artifacts
+          path: rootfs/out/*
+          if-no-files-found: warn

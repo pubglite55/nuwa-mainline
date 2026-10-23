@@ -1,0 +1,6 @@
+kernel/out/
+rootfs/out/
+*.img
+*.tar
+*.tar.zst
+!*config*
