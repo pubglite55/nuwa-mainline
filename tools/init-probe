@@ -1,0 +1,10 @@
+#!/bin/busybox sh
+mkdir -p /sbin /usr/bin /usr/sbin /bin
+/bin/busybox --install -s /bin /sbin /usr/bin /usr/sbin
+mount -t proc proc /proc 2>/dev/null
+mount -t sysfs sysfs /sys 2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+echo "probe: init started $(cat /proc/uptime)" > /dev/kmsg 2>/dev/null
+sleep 5
+echo "probe: rebooting" > /dev/kmsg 2>/dev/null
+reboot -f

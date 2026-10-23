@@ -2,7 +2,7 @@
 /* 主线存根：CAF 的 xiaomi_touch 框架实现，提供 fts_spi 链接所需的符号。 */
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/xiaomi_touch.h>
+#include "xiaomi_touch.h"
 #include <linux/export.h>
 
 int register_xiaomi_touch_client(enum touch_id touch_id,
