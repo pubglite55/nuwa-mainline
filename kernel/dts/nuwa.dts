@@ -1195,6 +1195,7 @@
 
 &usb_1 {
 	status = "okay";
+	dr_mode = "peripheral";
 };
 
 &usb_1_dwc3_hs {
