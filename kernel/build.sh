@@ -56,7 +56,8 @@ bash "$LINUX/scripts/config" --file "$OUT/.config" \
   --enable PHY_QCOM_QMP --enable PHY_QCOM_QMP_USB --enable PHY_QCOM_QMP_COMBO \
   --enable PHY_QCOM_QUSB2 --enable PHY_QCOM_EUSB2_REPEATER --enable PHY_QCOM_SNPS_FEMTO_V2 \
   --enable PSTORE_RAM --enable PSTORE_CONSOLE --enable PSTORE_PMSG \
-  --enable TOUCHSCREEN_ST_FTS_V521_SPI
+  --enable TOUCHSCREEN_ST_FTS_V521_SPI \
+  --enable ATH11K --enable ATH11K_PCI --enable BT_QCA --enable BT_HCIUART_QCA
 make -C "$LINUX" O="$OUT" olddefconfig
 
 make -C "$LINUX" O="$OUT" -j"$JOBS" Image dtbs
