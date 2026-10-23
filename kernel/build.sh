@@ -4,6 +4,8 @@ cd "$(dirname "$0")"
 
 LINUX=${LINUX_DIR:-linux}
 OUT=${OUT_DIR:-out}
+case "$LINUX" in /*) ;; *) LINUX="$(pwd)/$LINUX" ;; esac
+case "$OUT" in /*) ;; *) OUT="$(pwd)/$OUT" ;; esac
 JOBS=${JOBS:-$(nproc)}
 
 if [ ! -d "$LINUX" ]; then
@@ -27,6 +29,7 @@ if [ -d drivers/input/touchscreen/fts_spi ]; then
   grep -q 'fts_spi/' "$TMK" || echo 'obj-$(CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI) += fts_spi/' >> "$TMK"
   grep -q 'fts_spi/Kconfig' "$TKC" || echo 'source "drivers/input/touchscreen/fts_spi/Kconfig"' >> "$TKC"
   [ -f include/linux/xiaomi_touch.h ] && cp include/linux/xiaomi_touch.h "$LINUX/include/linux/"
+  [ -d drivers/input/touchscreen/xiaomi ] && mkdir -p "$LINUX/drivers/input/touchscreen/xiaomi" && cp drivers/input/touchscreen/xiaomi/* "$LINUX/drivers/input/touchscreen/xiaomi/"
   [ -f include/linux/of_gpio.h ] && cp include/linux/of_gpio.h "$LINUX/include/linux/"
 fi
 
@@ -43,7 +46,7 @@ export KBUILD_BUILD_USER=nuwa
 export KBUILD_BUILD_HOST=nuwa-build
 
 mkdir -p "$OUT"
-make -C "$LINUX" O="$(pwd)/$OUT" defconfig
+make -C "$LINUX" O="$OUT" defconfig
 
 # ---- nuwa 需要的驱动/特性（内建，便于 initramfs 使用） ----
 bash "$LINUX/scripts/config" --file "$OUT/.config" \
@@ -53,9 +56,9 @@ bash "$LINUX/scripts/config" --file "$OUT/.config" \
   --enable PHY_QCOM_QUSB2 --enable PHY_QCOM_EUSB2_REPEATER --enable PHY_QCOM_SNPS_FEMTO_V2 \
   --enable PSTORE_RAM --enable PSTORE_CONSOLE --enable PSTORE_PMSG \
   --enable TOUCHSCREEN_ST_FTS_V521_SPI
-make -C "$LINUX" O="$(pwd)/$OUT" olddefconfig
+make -C "$LINUX" O="$OUT" olddefconfig
 
-make -C "$LINUX" O="$(pwd)/$OUT" -j"$JOBS" Image dtbs
+make -C "$LINUX" O="$OUT" -j"$JOBS" Image dtbs
 
 echo "== ccache stats =="
 ccache -s | sed -n '1,12p'
