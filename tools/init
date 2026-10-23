@@ -1,0 +1,38 @@
+#!/bin/busybox sh
+/bin/busybox --install -s
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /sys/kernel/config /sys/kernel/debug
+mount -t configfs none /sys/kernel/config 2>/dev/null || true
+
+echo "nuwa-initramfs: start $(cat /proc/uptime)" > /dev/kmsg 2>/dev/null || true
+
+G=/sys/kernel/config/usb_gadget/nuwa
+if [ -d /sys/kernel/config/usb_gadget ]; then
+  mkdir -p $G
+  echo 0x1d6b > $G/idVendor
+  echo 0x0104 > $G/idProduct
+  mkdir -p $G/strings/0x409
+  echo nuwa > $G/strings/0x409/serialnumber
+  echo nuwa > $G/strings/0x409/manufacturer
+  echo nuwa > $G/strings/0x409/product
+  mkdir -p $G/configs/c.1/strings/0x409
+  echo ncm > $G/configs/c.1/strings/0x409/configuration
+  mkdir -p $G/functions/ncm.usb0
+  ln -sf $G/functions/ncm.usb0 $G/configs/c.1/ncm.usb0
+  UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+  echo "nuwa-initramfs: udc=$UDC" > /dev/kmsg 2>/dev/null || true
+  if [ -n "$UDC" ]; then echo $UDC > $G/UDC; fi
+fi
+
+sleep 2
+ip link set usb0 up 2>/dev/null || true
+ip addr add 192.168.0.1/24 dev usb0 2>/dev/null || true
+telnetd -l /bin/sh 2>/dev/null || true
+echo "nuwa-initramfs: ready $(cat /proc/uptime)" > /dev/kmsg 2>/dev/null || true
+
+# 超时保护：10 分钟后自动重启回原系统
+sleep 600
+reboot -f
