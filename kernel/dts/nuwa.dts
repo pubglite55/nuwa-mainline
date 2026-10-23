@@ -939,7 +939,7 @@
 	status = "okay";
 
 	panel@0 {
-		compatible = "visionox,vtdr6130";
+		compatible = "xiaomi,nuwa-m2-panel";
 		reg = <0>;
 
 		pinctrl-names = "default", "sleep";
