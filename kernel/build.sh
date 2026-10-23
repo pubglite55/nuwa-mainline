@@ -30,6 +30,7 @@ if [ -d drivers/input/touchscreen/fts_spi ]; then
   grep -q 'fts_spi/Kconfig' "$TKC" || echo 'source "drivers/input/touchscreen/fts_spi/Kconfig"' >> "$TKC"
   [ -f include/linux/xiaomi_touch.h ] && cp include/linux/xiaomi_touch.h "$LINUX/include/linux/"
   [ -d drivers/input/touchscreen/xiaomi ] && mkdir -p "$LINUX/drivers/input/touchscreen/xiaomi" && cp drivers/input/touchscreen/xiaomi/* "$LINUX/drivers/input/touchscreen/xiaomi/"
+  grep -q 'xiaomi_touch_stub' "$TMK" || echo 'obj-y += xiaomi/xiaomi_touch_stub.o' >> "$TMK"
   [ -f include/linux/of_gpio.h ] && cp include/linux/of_gpio.h "$LINUX/include/linux/"
 fi
 
