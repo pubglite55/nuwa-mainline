@@ -1225,3 +1225,23 @@
 &xo_board {
 	clock-frequency = <76800000>;
 };
+
+&spi4 {
+	status = "okay";
+
+	touchscreen@0 {
+		compatible = "st,spi";
+		reg = <0>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <25 IRQ_TYPE_EDGE_FALLING>;
+		spi-max-frequency = <10000000>;
+
+		fts,x-max = <14400>;
+		fts,y-max = <32000>;
+		fts,irq-gpio = <&tlmm 25 0x2008>;
+		fts,reset-gpio = <&tlmm 24 0x00>;
+		reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
+
+		status = "okay";
+	};
+};
