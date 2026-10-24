@@ -28,10 +28,10 @@ if [ -d /sys/kernel/config/usb_gadget ]; then
   if [ -n "$UDC" ]; then echo $UDC > $G/UDC; fi
 fi
 
-sleep 2
-ip link set usb0 up 2>/dev/null || true
-ip addr add 192.168.0.1/24 dev usb0 2>/dev/null || true
-telnetd -l /bin/sh 2>/dev/null || true
+/bin/busybox sleep 2
+/bin/busybox ip link set usb0 up 2>/dev/null || true
+/bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null || true
+/bin/busybox telnetd -l /bin/sh 2>/dev/null || true
 # 黑盒探针：能振动就振动一下，让用户知道 initramfs 跑起来了
 for v in /sys/class/leds/vibrator /sys/class/timed_output/vibrator /sys/devices/virtual/timed_output/vibrator; do
   [ -e "$v/brightness" ] && echo 80 > "$v/brightness" 2>/dev/null
@@ -41,5 +41,5 @@ done
 echo "nuwa-initramfs: ready $(cat /proc/uptime)" > /dev/kmsg 2>/dev/null || true
 
 # 超时保护：10 分钟后自动重启回原系统
-sleep 120
-reboot -f
+/bin/busybox sleep 120
+/bin/busybox reboot -f

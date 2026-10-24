@@ -1,0 +1,51 @@
+name: build-community
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-community.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  community-kernel:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev \
+            cpio kmod device-tree-compiler python3 zstd
+
+      - name: 克隆社区内核（含 nuwa 补丁）
+        run: |
+          git clone --depth 1 --branch 7.0 https://github.com/alfaonyt/nuwa-mainline.git kc
+          cd kc && git log --oneline -3
+
+      - name: 配置 ABL 可接受的身份标识
+        run: |
+          DTS=kc/arch/arm64/boot/dts/qcom/sm8550-xiaomi-nuwa.dts
+          sed -i 's/qcom,msm-id = <[^;]*>;/qcom,msm-id = <0x25c 0x20000>;/' "$DTS"
+          sed -i 's/qcom,board-id = <[^;]*>;/qcom,board-id = <0x00 0x00>;/' "$DTS"
+          grep -n 'msm-id\|board-id' "$DTS" | head -3
+
+      - name: 构建内核
+        run: |
+          cd kc
+          make ARCH=arm64 defconfig
+          ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/sm8550.config
+          make ARCH=arm64 olddefconfig
+          make ARCH=arm64 -j"$(nproc)" Image dtbs
+
+      - name: 上传内核产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: community-kernel
+          path: |
+            kc/arch/arm64/boot/Image
+            kc/arch/arm64/boot/dts/qcom/sm8550-xiaomi-nuwa*.dtb
+          if-no-files-found: error

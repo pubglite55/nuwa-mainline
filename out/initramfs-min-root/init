@@ -1,0 +1,9 @@
+#!/bin/busybox sh
+mkdir -p /proc /sys /dev /tmp
+/bin/busybox mount -t proc proc /proc 2>/dev/null
+/bin/busybox mount -t sysfs sysfs /sys 2>/dev/null
+/bin/busybox mount -t devtmpfs devtmpfs /dev 2>/dev/null
+echo "nuwa-min: start $(/bin/busybox cat /proc/uptime 2>/dev/null)" > /dev/kmsg 2>/dev/null
+/bin/busybox sleep 120
+echo "nuwa-min: timeout, rebooting" > /dev/kmsg 2>/dev/null
+/bin/busybox reboot -f
