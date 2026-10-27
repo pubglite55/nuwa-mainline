@@ -1400,3 +1400,67 @@ Status = gBS->StartImage (Image, &ExitDataSize, &ExitData);
 **卷能否被 FatDxe 挂载** —— 这是整条链路上唯一还没验证的环节。
 其余每一步（BootShim 复制 FD、UEFI 启动、UniXNU 加载配置、LoadImage、内核 EFI stub、initramfs 解压、/init 执行）
 都已有代码级或 QEMU 级的证据。
+
+
+## ★ 第二十五轮：4 KiB FAT16 的 EDK2 兼容性已离线证明
+
+### 源码级依据
+
+`FatPkg/EnhancedFatDxe/Fat.h`：
+
+```c
+#define MAX_BLOCK_ALIGNMENT                12    // 2^12 = 4096
+#define MIN_BLOCK_ALIGNMENT                9     // 2^9  = 512
+#define MAX_SECTORS_PER_CLUSTER_ALIGNMENT  7
+```
+
+`FatPkg/EnhancedFatDxe/Init.c` 的 `FatOpenDevice` 检查：
+
+```c
+if ((FatBs.FatBsb.ReservedSectors == 0) || (FatBs.FatBsb.NumFats == 0) || (Sectors == 0)) {
+  return EFI_UNSUPPORTED;
+}
+if ((FatBs.FatBsb.SectorSize & (FatBs.FatBsb.SectorSize - 1)) != 0) {   // 必须是 2 的幂
+  return EFI_UNSUPPORTED;
+}
+BlockAlignment = (UINT8)HighBitSet32 (FatBs.FatBsb.SectorSize);
+if ((BlockAlignment > MAX_BLOCK_ALIGNMENT) || (BlockAlignment < MIN_BLOCK_ALIGNMENT)) {
+  return EFI_UNSUPPORTED;     // 必须在 512..4096 之间
+}
+if ((FatBs.FatBsb.SectorsPerCluster & (FatBs.FatBsb.SectorsPerCluster - 1)) != 0) {
+  return EFI_UNSUPPORTED;
+}
+```
+
+**关键：`MAX_BLOCK_ALIGNMENT = 12`，也就是 4096 —— 我们的扇区大小正好是允许的上限。**
+
+### 逐项核对我们的 payload
+
+`other/payload-bootb-efifb.img`：
+
+| # | 检查项 | 实际值 | 结果 |
+|---|---|---|---|
+| 1 | `ReservedSectors != 0` | 1 | PASS |
+| 2 | `NumFats != 0` | 2 | PASS |
+| 3 | `Sectors != 0` | 49152 | PASS |
+| 4 | `SectorSize` 是 2 的幂 | 4096 | PASS |
+| 5 | `BlockAlignment` 在 9..12 | 12 | **PASS（正好上限）** |
+| 6 | `SectorsPerCluster` 是 2 的幂 | 1 | PASS |
+| 7 | `SPCA <= 7` | 0 | PASS |
+| 8 | `Media` 规则 | 0xF8 | PASS |
+| 9 | Fat16 `RootEntries != 0` | 4096 | PASS |
+
+**九项全过 → 4 KiB FAT16 在 EDK2 FatPkg 层面完全兼容。**
+
+### 这把风险从"未知"降级为"只差一个环节"
+
+| 环节 | 状态 |
+|---|---|
+| FAT 格式合法性 | ✅ 源码级 + 逐项验证 |
+| EDK2 FatPkg 支持 4 KiB | ✅ `MAX_BLOCK_ALIGNMENT=12` |
+| 我们的 payload 通过全部检查 | ✅ 九项 PASS |
+| **UFSDxe 是否正确暴露 boot_b 的 BlockIo** | ⚠️ **唯一剩余未知** |
+
+UFSDxe 是 `Binaries/nuwa/QcomPkg/Drivers/UFSDxe/UFSDxe.inf`（预编译，无源码），
+所以它的行为只能真机观察。但即使它有问题，还有 512 B FAT32 的路径
+（`esp-*.img` 刷到 `vendor_boot_a`）可以试 —— 那种格式在所有 UEFI 实现里都是最保险的。
