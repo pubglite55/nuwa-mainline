@@ -823,3 +823,49 @@ QEMU 里 `console=ttyAMA0` 没建立对应设备，`/dev/tty0` 也不存在，
 | **只改 initramfs / init** | **30.9 秒**（重打包 + 重链接） |
 
 所以"改 init → 验证 → 再改"这个循环非常快，可以反复试。
+
+
+## 第十六轮：QEMU 无法验证 ESP 启动（否定结论，避免重复尝试）
+
+### 尝试
+
+想用 QEMU + AAVMF 验证「4 KiB FAT16 能否被 EDK2 的 FatDxe 挂载」：
+
+```bash
+qemu-system-aarch64 -M virt -cpu max -m 2G \
+  -drive if=pflash,format=raw,readonly=on,file=AAVMF_CODE.fd \
+  -drive if=pflash,format=raw,file=vars.fd \
+  -drive file=test4k.img,if=none,id=d0,format=raw \
+  -device virtio-blk-pci,drive=d0,logical_block_size=4096,physical_block_size=4096 \
+  -boot order=d -nographic
+```
+
+（ESP 内含 UEFI Shell 作为 `\EFI\BOOT\BOOTAA64.EFI` + `startup.nsh` 自动执行 `map -r`）
+
+### 结果
+
+固件正常启动（`UEFI firmware 2025.11-3ubuntu7.3`），但**70 秒内没有任何 Shell 输出**。
+
+### 正对照（关键）
+
+用 **512 B FAT32**（标准格式）做完全相同的测试 —— **同样没有输出**。
+
+⇒ **结论：不是 4 KiB 扇区的问题，是 AAVMF 在 `-nographic` 下不会自动从 virtio 磁盘启动
+`\EFI\BOOT\BOOTAA64.EFI`**。它的 BDS 依赖 NVRAM 里的启动项，而我们没有预置。
+
+### 为什么真机不受影响
+
+nuwa 的 UniXNU **主动扫描所有 SimpleFileSystem 卷**（`UniXNUConfigLoad` +
+`AddFallbackLoaders`），不依赖 BDS 的启动顺序。这是两者的根本差别。
+
+### 附带踩到的 QEMU 参数坑
+
+```
+Block format 'raw' does not support the option 'logical_block_size'   ← 应放 -device 上
+logical_block_size > physical_block_size not supported                ← 两者都要设
+```
+
+### 结论
+
+**4 KiB FAT16 是否能被 UFSDxe + FatDxe 挂载，只能真机验证**。QEMU 这条路已排除，
+不再重复尝试。
