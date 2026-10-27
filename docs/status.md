@@ -18,11 +18,12 @@ ABL 直启路线已放弃（dtb 强校验 + 无 console 输出）。改走社区
 
 | 文件 | 大小 | 用途 |
 |---|---|---|
-| `uefi-nuwa/Mu-nuwa.img` | 2.13 MB | UEFI 固件，刷 `boot_a` |
-| `esp-shell.img` | 64 MB | UEFI Shell，验证 FAT 挂载链路 |
-| `esp-nuwa.img` | 64 MB | 正常版内核（49.2 MB，含模块），刷 `vendor_boot_a` |
-| `esp-nuwa-nodrm.img` | 64 MB | 安全版内核（simpledrm），黑屏时用 |
-| `uefi-nuwa-debug/Mu-nuwa.img` | 2.25 MB | **UEFI DEBUG 版**，屏幕打印卷扫描/config 日志 |
+| `uefi-nuwa/Mu-nuwa.img` | 2.13 MB | UEFI 固件 RELEASE，刷 `boot_a` |
+| `uefi-nuwa-debug/Mu-nuwa.img` | 2.25 MB | UEFI DEBUG 版，屏幕打印卷扫描日志 |
+| **`payload-bootb.img`** | 201,326,592（192 MiB） | **首选**：4 KiB 扇区 FAT16，刷 `boot_b`，内含 nodrm 内核 |
+| `esp-nuwa.img` | 64 MB | 512 B FAT32 正常版，刷 `vendor_boot_a` |
+| `esp-nuwa-nodrm.img` | 64 MB | 512 B FAT32 nodrm 版 |
+| `esp-shell.img` | 64 MB | UEFI Shell + nodrm 内核（诊断 + 手动启动） |
 
 ## 自包含内核（BOOTAA64.EFI）
 
