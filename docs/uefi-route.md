@@ -744,3 +744,53 @@ menuentry "Ubuntu Linux (nuwa, self-contained)" {
 | 4 | **rEFInd** | Shell/rEFInd 菜单直接 loader | `esp-refind.img` |
 
 前三层都依赖 UniXNU 的卷扫描；第 4 层是独立引导器，只要 UEFI 能加载 `\EFI\BOOT\BOOTAA64.EFI` 就能起。
+
+
+## ★ 第十五轮：QEMU 端到端验证（决定性证据）
+
+用 QEMU 直接加载本地编译的 efifb 内核（`-kernel Image`，`-M virt`）：
+
+```
+[ 0.000000] Booting Linux on physical CPU 0x0000000000
+[ 0.000000] Linux version 7.3.0-g734bef548a96-dirty (aarch64-linux-gnu-gcc 15.2.0)
+             #4 SMP PREEMPT_DYNAMIC Wed Oct 28 03:14:53 CST 2026
+...
+[16.668568] SPI driver fts has no spi_device_id for st,spi
+[16.725901] clk: Disabling unused clocks
+[16.726281] PM: genpd: Disabling unused power domains
+[16.726832] Warning: unable to open an initial console.
+[17.404012] Freeing unused kernel memory: 4544K
+[17.408659] Run /init as init process
+[17.409647]   with arguments: /init
+[17.460299]     HOME=/
+[17.460320]     TERM=linux
+```
+
+### 四条已证实的结论
+
+| # | 结论 | 证据 |
+|---|---|---|
+| 1 | **内核可正常启动** | `Booting Linux on physical CPU` → `Freeing unused kernel memory` |
+| 2 | **initramfs 已内嵌且被解压** | `Freeing unused kernel memory: 4544K` 之后立即 `Run /init as init process` |
+| 3 | **`/init` 真的被执行** | `Run /init as init process with arguments: /init` |
+| 4 | **FTS 触控驱动已内建并注册** | `SPI driver fts has no spi_device_id for st,spi`（QEMU 无硬件，但驱动已就位） |
+
+### 同时暴露的两个真实问题
+
+**问题 1：资源回收确实会发生**
+
+```
+[16.725901] clk: Disabling unused clocks
+[16.726281] PM: genpd: Disabling unused power domains
+```
+
+这次 QEMU 测试的 cmdline 是 `console=ttyAMA0 ignore_loglevel loglevel=7`，**没有**带
+`clk_ignore_unused pd_ignore_unused`，所以回收正常发生 —— 反证了真机版带这两个参数是必要的。
+
+**问题 2：`unable to open an initial console`，init 的输出可能全部丢失**
+
+QEMU 里 `console=ttyAMA0` 没建立对应设备，`/dev/tty0` 也不存在，
+于是 `exec >/dev/tty0` 失败 → **后续所有输出消失**，只能靠 `Run /init` 这一行判断它跑起来了。
+
+**已修正 `tools/init`**：输出设备按 `/dev/tty0` → `/dev/console` → `/dev/ttyAMA0` 顺序兜底，
+并额外写一行到 `/dev/kmsg`，保证即使屏幕不可用也能从 dmesg/pstore 取到执行痕迹。

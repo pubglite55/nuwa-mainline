@@ -7,8 +7,15 @@
 /bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null
 /bin/busybox mount -t configfs none /sys/kernel/config 2>/dev/null
 
-# 关键：把后续所有输出打到屏幕
-exec >/dev/tty0 2>&1
+# 关键：把后续所有输出打到可见设备（按可用性兜底）
+for OUT in /dev/tty0 /dev/console /dev/ttyAMA0; do
+  if [ -c "$OUT" ] || [ -e "$OUT" ]; then
+    exec >"$OUT" 2>&1
+    break
+  fi
+done
+# 兜底：同时把关键信息写进内核日志（即使屏幕不可用也能从 pstore/dmesg 取）
+echo "nuwa-init: output bound" > /dev/kmsg 2>/dev/null || true
 
 echo ""
 echo "=============================================="
