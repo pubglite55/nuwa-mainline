@@ -1464,3 +1464,71 @@ if ((FatBs.FatBsb.SectorsPerCluster & (FatBs.FatBsb.SectorsPerCluster - 1)) != 0
 UFSDxe 是 `Binaries/nuwa/QcomPkg/Drivers/UFSDxe/UFSDxe.inf`（预编译，无源码），
 所以它的行为只能真机观察。但即使它有问题，还有 512 B FAT32 的路径
 （`esp-*.img` 刷到 `vendor_boot_a`）可以试 —— 那种格式在所有 UEFI 实现里都是最保险的。
+
+
+## ★ 第二十六轮：DXE 驱动清单揭示的两件事
+
+### 1. 显示用的是完整高通 DisplayDxe，不是 SimpleFbDxe
+
+`nuwaPkg/Include/DXE.inc`：
+
+```
+!if $(USE_CUSTOM_DISPLAY_DRIVER) == 1
+  INF Binaries/nuwa/QcomPkg/Drivers/DisplayDxe/DisplayDxe.inf
+!else
+  INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
+!endif
+```
+
+`nuwaPkg/nuwa.dsc`：
+
+```
+USE_CUSTOM_DISPLAY_DRIVER      = 1
+```
+
+⇒ **我们的固件走 DisplayDxe**：完整初始化 DSI/DSC/面板，提供正确的 1440x3200 GOP framebuffer。
+这比 SimpleFbDxe 可靠，也解释了为什么 UEFI 界面显示正常。
+
+**对内核的意义**：UEFI 已经把面板点亮并让显示控制器循环扫描一块内存，
+内核只要继承这个 framebuffer 就能出图（efifb / simpledrm 都行）。
+**但硬件起点是 DisplayDxe 建立的，与 ABL 交接时不同** —— 这正是经验库第 4 条警告的具体内容。
+
+### 2. PIL 被禁用 —— 这解释了音频/传感器为什么不可用
+
+```
+// INF Binaries/nuwa/QcomPkg/Drivers/PILDxe/PILDxe.inf   # probe: PIL needs a matching
+//     uefipil.cfg entry and panics otherwise; not needed for the menu
+// INF Binaries/nuwa/QcomPkg/Drivers/PILProxyDxe/PILProxyDxe.inf
+```
+
+**PIL（Peripheral Image Loader）负责加载各子系统固件**（ADSP、CDSP、modem、GPU 等）。
+它被注释掉，理由是"需要匹配的 uefipil.cfg，否则会 panic"。
+
+后果与官方状态表**完全对应**：
+
+| 子系统 | 需要 PIL 加载固件 | 官方状态 |
+|---|---|---|
+| 音频（ADSP） | ✅ 需要 | **Speakers ❌ / Microphone ❌** |
+| 传感器 | ✅ 需要 | **全部 ❌** |
+| 移动数据（modem） | ✅ 需要 | **Mobile Data ❌** |
+| GPU | ✅ 需要 | **GPU ❌** |
+| 相机 | ✅ 需要 | **Camera ❌** |
+
+**这不是我们的驱动写错了，而是 UEFI 固件本身就没启用 PIL。**
+要让音频工作，需要先解决 `uefilpil.cfg` 的配置问题——这是一个独立的、可能很深的子任务。
+
+### 完整可用的 DXE 驱动（对内核有意义的部分）
+
+| 驱动 | 作用 | 对 Linux 的影响 |
+|---|---|---|
+| `UFSDxe` | UFS 存储 | 决定 payload 卷能否被读 |
+| `DisplayDxe` | 完整显示 | 提供 GOP framebuffer |
+| `UsbfnDwc3Dxe` | USB device 控制器 | UEFI 阶段的 USB device |
+| `UsbConfigDxe` / `UsbDeviceDxe` / `UsbMsdDxe` | USB 配置与 Mass Storage | U 盘模式 |
+| `ButtonsDxe` | 按键 | 音量键/电源键在 UEFI 里可用 |
+| `TLMMDxe` / `I2CDxe` / `SPIDxe` / `GpiDxe` | 引脚/I2C/SPI/GPI | UEFI 阶段外设总线 |
+| `SPMIDxe` / `RpmhDxe` / `ClockDxe` / `VcsDxe` | PMIC 与时钟 | 电源/时钟初始化 |
+| `HALIOMMUDxe` | IOMMU | 影响 DMA |
+| `TsensDxe` / `DDRInfoDxe` | 温度/内存信息 | 诊断用 |
+
+**注意**：这些是 UEFI 阶段的驱动，它们建立的硬件状态会被内核继承（或在 `ExitBootServices` 时被内核重置）。
