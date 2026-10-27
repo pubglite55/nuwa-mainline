@@ -277,3 +277,58 @@ UEFI 的 framebuffer 是横向的（3200×1440），面板是竖屏（1440×3200
 | 本来就是正的 | 去掉参数 |
 
 改完重新 `make Image`（30 秒）+ 重建镜像。
+
+
+---
+
+## 15. 改了内核参数却不生效
+
+**症状**：cmdline 里加了 `console=tty0` / `clk_ignore_unused` / `fbcon=rotate:1`，
+但真机上完全看不到效果；QEMU 里却正常。
+
+**原因**（我们踩过）：`CONFIG_CMDLINE_FROM_BOOTLOADER=y`（arm64 的默认值）意味着
+**内核优先用 bootloader 传来的 cmdline，忽略 `CONFIG_CMDLINE`**。
+
+nuwa 的 ABL 会往 dtb 的 `/chosen/bootargs` 塞约 1100 字符的参数，而 UniXNU 调
+`LoadImage(..., NULL, 0, ...)`（LoadOptions 为空），内核就退回读 dtb 的 bootargs。
+
+**怎么确认**：
+
+```bash
+# 1. 看内核实际用的命令行（启动日志第一屏）
+#    应该出现 "Kernel command line: ..."
+dmesg | grep "Kernel command line"
+
+# 2. 对比内建的
+cat /proc/cmdline
+```
+
+如果 `Kernel command line` 里没有你写的参数，而是一堆 `msm_drm.`、`block2mtd.` 之类，
+就是这个问题。
+
+**修复**：
+
+```
+# CONFIG_CMDLINE_FROM_BOOTLOADER is not set
+CONFIG_CMDLINE_FORCE=y
+CONFIG_CMDLINE="console=tty0 console=ttyAMA0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1"
+```
+
+**两个坑中坑**：
+
+1. **arm64 没有 `CMDLINE_EXTEND`** —— 它的 Kconfig choice 只有 `FROM_BOOTLOADER` 和 `FORCE` 两项
+   （`EXTEND` 只存在于 powerpc 等架构）。用 `--enable CMDLINE_EXTEND` 会被 `olddefconfig` 丢掉。
+2. **`scripts/config --disable` 对 choice 型选项不可靠** —— 必须直接编辑 `.config` 里的那三行
+   （`# CONFIG_CMDLINE_FROM_BOOTLOADER is not set` + `CONFIG_CMDLINE_FORCE=y`）。
+
+**验证修复是否生效**（不用真机）：
+
+```bash
+qemu-system-aarch64 -M virt -cpu max -m 2G -kernel Image -append "" -nographic
+# 日志里应该有完整的 "Kernel command line: console=tty0 ..."
+# -append 是空的却能出现完整 cmdline ⇒ FORCE 生效
+```
+
+**代价**：FORCE 会丢掉 ABL 的所有参数（`msm_drm.dsi_display0`、`kpti=0` 等）。
+阶段 1（自包含 initramfs + efifb）不需要它们。阶段 2 若需要，改用 UniXNU 的
+`[[dt_patch]]` 精确改 dtb。
