@@ -21,6 +21,10 @@
 
 ### TD-02 `clk_ignore_unused pd_ignore_unused` 防资源回收
 
+> ⚠️ **2026-10-28 重要更正**：这两个参数在发现 `CONFIG_CMDLINE_FROM_BOOTLOADER=y` 之前
+> **从未真正生效过**（被 ABL 的 dtb bootargs 覆盖）。修复后（`CMDLINE_FORCE=y`）才真正生效。
+> 详见 `uefi-route.md` §第三十三轮。
+
 | 项 | 内容 |
 |---|---|
 | 临时做法 | cmdline 加 `clk_ignore_unused pd_ignore_unused`，阻止内核回收"没人用"的时钟和电源域 |
@@ -33,6 +37,8 @@
 
 ### TD-03 `fbcon=rotate:1` 屏幕旋转
 
+> ⚠️ **同上**：修复 `CMDLINE_FORCE` 之前从未生效。
+
 | 项 | 内容 |
 |---|---|
 | 临时做法 | cmdline 加 `fbcon=rotate:1`，把 fbcon 文本控制台旋转 90° |
@@ -42,6 +48,18 @@
 | 影响与风险 | 只影响 fbcon，GNOME 起来后由 `/etc/xdg/monitors.xml` 控制，两者可能不一致 |
 | 去掉条件 | TD-01 完成后 |
 | 关联文档 | `uefi-route.md` §第二十八轮 |
+
+### TD-08 内核 cmdline 依赖 `CMDLINE_FORCE`（放弃 bootloader 参数）
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | `CONFIG_CMDLINE_FORCE=y`，完全忽略 ABL 往 dtb 塞的 1100 字符 bootargs |
+| 位置 | 内核 `.config`；CI `build-bootefi.yml` |
+| 为什么暂时需要 | ABL 的 bootargs 会覆盖我们的 `CONFIG_CMDLINE`（arm64 没有 `CMDLINE_EXTEND`，只有 FORCE 和 FROM_BOOTLOADER） |
+| 正确做法 | 长期看，阶段 2 若需要 `msm_drm.dsi_display0` 等 ABL 参数，应改用 UniXNU 的 `[[dt_patch]]` 精确修改 dtb 的 `/chosen/bootargs`，而不是全盘 FORCE |
+| 影响与风险 | 丢失 ABL 的所有调优参数（`kpti=0`、`kasan=off`、`loglevel=6` 等）；当前阶段 1 不受影响 |
+| 去掉条件 | 阶段 2 需要 ABL 参数时，改用 dt_patch |
+| 关联文档 | `uefi-route.md` §第三十三轮 |
 
 ### TD-04 OEM 标签手工 patch 成 `MTOO4043`
 
@@ -104,6 +122,7 @@
 | 优先级 | 技术债 | 理由 |
 |---|---|---|
 | 1 | TD-01 原生显示接管 | 解锁亮度/熄屏/刷新率，且是 TD-02/TD-03 的前提 |
+| 1.5 | TD-08 改用 dt_patch | 阶段 2 需要 ABL 显示参数时必做 |
 | 2 | TD-02 去掉防回收参数 | 全局开关掩盖问题，长期会误导 |
 | 3 | TD-05 确认 4KiB FAT | 影响启动链路稳定性 |
 | 4 | TD-03 旋转 | 随 TD-01 一起解决 |
