@@ -1760,3 +1760,46 @@ FAT 的 `SectorSize` 只参与**簇号 ↔ 字节偏移**的换算（`BlockAlign
 
 现在剩下的问题纯粹是"UFSDxe 有没有把 boot_b 暴露出来"，
 不再是"格式对不对"的问题。
+
+
+## 第三十一轮：boot_b 的 GPT 类型不影响枚举
+
+### 问题
+
+`boot_b` 的 GPT 类型 GUID 是 Android 的 "boot" 类型，**不是** EFI System Partition。
+PartitionDxe 会不会因此跳过它？
+
+### 答案：不会
+
+`MdeModulePkg/Universal/Disk/PartitionDxe/Partition.c`（46 KB）里
+**没有任何按分区类型过滤的逻辑**。它的行为是标准的：
+
+1. 遍历 GPT/MBR 分区表
+2. 为**每一个**分区创建子 BlockIo 句柄（`PartitionInstallChildHandle`）
+3. 在子句柄上挂 DevicePath（含分区号）
+
+FatDxe 随后会尝试在**每个** BlockIo 上解析 FAT 引导扇区，
+解析成功的才挂载为文件系统卷。
+
+### 这意味着什么
+
+| 疑问 | 答案 |
+|---|---|
+| boot_b 类型是 "boot" 不是 ESP，会被跳过吗？ | **不会**，PartitionDxe 不看类型 |
+| 需要把 boot_b 的 GPT 类型改成 ESP 吗？ | **不需要** |
+| `tools/twrp-set-esp-type.sh` 还有用吗？ | 只在某些固件的 BDS 只从 ESP 类型分区启动时有用；我们的 UniXNU 是主动扫描，用不上 |
+
+### 至此，4 KiB FAT16 路径的每一环都有依据
+
+| 环节 | 依据 | 状态 |
+|---|---|---|
+| UFSDxe 暴露整个 UFS 磁盘 | `DXE.inc` 里 `INF Binaries/nuwa/QcomPkg/Drivers/UFSDxe/UFSDxe.inf` | ✅ 存在 |
+| PartitionDxe 为 boot_b 创建 BlockIo | 源码无类型过滤 | ✅ |
+| FatDxe 解析 FAT 引导扇区 | 九项检查全过 | ✅ |
+| 4 KiB 扇区被接受 | `MAX_BLOCK_ALIGNMENT=12` | ✅ |
+| FAT 扇区与 BlockIo 块大小解耦 | `DiskCache.c` 用 BlockIo 的块大小 | ✅ |
+| 卷被 UniXNU 枚举 | `AddFallbackLoaders` 遍历所有 SimpleFileSystem | ✅ |
+| 内核被加载执行 | QEMU 端到端验证 | ✅ |
+
+**唯一无法离线确认的只剩一件事**：UFSDxe 这个预编译二进制在 nuwa 上是否真的初始化成功
+（它的内部行为无源码可查）。但这是"驱动能不能跑"的问题，不是"格式对不对"的问题。
