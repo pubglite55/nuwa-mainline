@@ -1862,3 +1862,93 @@ echo "nuwa-init: timeout, rebooting (force, no sync)" > /dev/kmsg
 | 根 `compatible` 判断机型 | 用 `qcom,msm-id`/`board-id` 或直接读 `/proc/device-tree/model` 并做兜底 |
 | `/proc/cmdline` 判断启动来源 | 用 `/sys/firmware/efi` 是否存在 |
 | 槽位属性位判断 A/B | 用 bootloader 自己的 `--set-active` |
+
+
+## ★ 第三十三轮：发现一个可能直接导致真机黑屏的配置错误
+
+### 线索
+
+`experience/bootloader-and-boot.md` 里有一个标【高频】的坑：
+
+> **内核命令行来自设备树 `/chosen/bootargs`，而且有长度上限，超长部分被静默截断**
+> 现象：改镜像头里的 cmdline 不生效；或者命令行末尾的模块黑名单失效，被屏蔽的驱动照样加载。
+> 原因：ABL 读设备树的 bootargs 并原地追加几百字节自己的参数。
+
+### 检查我们采集过的运行时设备树
+
+`private/fdt-runtime.dts`（1.6 MB，之前从设备采集）里的 `/chosen`：
+
+```dts
+chosen {
+    linux,initrd-end = <0x00 0xb7ffe540>;
+    linux,initrd-start = <0x00 0xb5fea000>;
+    kaslr-seed = <0x00 0x00>;
+    bootargs = "console=ttyMSM0,115200n8 kpti=0 ... loglevel=6 ... init=/init
+                ... msm_drm.dsi_display0=qcom,mdss_dsi_m2_38_0c_0a_dsc_cmd: ...
+                block2mtd.block2mtd=/dev/block/sda16,2097152 ...";
+};
+```
+
+**bootargs 长达约 1100 字符**，是 ABL 塞进去的。
+
+### 致命点：我们的内核配置
+
+```
+CONFIG_CMDLINE_FROM_BOOTLOADER=y
+```
+
+这个选项意味着：**内核优先使用 bootloader 传来的 cmdline，忽略 `CONFIG_CMDLINE`**。
+
+而 UniXNU 是 `LoadImage(FALSE, ImageHandle, Path, NULL, 0, &Image)` —— **LoadOptions 为空**，
+于是内核退回读设备树的 `/chosen/bootargs`，也就是 **ABL 那 1100 字符**。
+
+**后果**：我们在 `CONFIG_CMDLINE` 里写的所有参数全部不生效：
+
+| 参数 | 本意 | 真机实际 |
+|---|---|---|
+| `console=tty0` | 输出到屏幕 | ❌ 被 ABL 的 `console=ttyMSM0,115200n8` 取代 |
+| `clk_ignore_unused` | 防显示资源被回收 | ❌ 不生效 |
+| `pd_ignore_unused` | 同上 | ❌ 不生效 |
+| `fbcon=rotate:1` | 屏幕旋转 | ❌ 不生效 |
+| `keep_bootcon` | 保留 bootconsole | ❌ 不生效 |
+| `loglevel=7` | 详细日志 | ❌ 被 ABL 的 `loglevel=6` 取代 |
+
+**这完全能解释"真机黑屏但 QEMU 正常"** —— QEMU 里没有 dtb bootargs，所以内核用了 `CONFIG_CMDLINE`。
+
+### 修复
+
+```
+CONFIG_CMDLINE_FROM_BOOTLOADER=n
+CONFIG_CMDLINE_EXTEND=y
+CONFIG_CMDLINE="console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1"
+```
+
+`CMDLINE_EXTEND` 的语义是：**bootloader cmdline + " " + CONFIG_CMDLINE**，
+即保留 ABL 的有用参数（如 `msm_drm.dsi_display0`、`rootwait`），并把我们的参数**追加在后面**。
+
+**追加在后 = 优先级更高**，因为内核解析同名参数时后者覆盖前者。所以：
+
+- `console=ttyMSM0,115200n8`（ABL）+ `console=tty0`（我们）→ **两个 console 都注册，tty0 成为默认**
+- `loglevel=6`（ABL）+ `loglevel=7`（我们）→ **生效的是 7**
+
+### 长度检查
+
+| 项 | 长度 |
+|---|---|
+| ABL bootargs | ~1100 字符 |
+| 我们的 CONFIG_CMDLINE | 118 字符 |
+| 合计 | ~1218 字符 |
+| arm64 `COMMAND_LINE_SIZE` | **2048** |
+
+⇒ 能装下，不会被截断。
+
+### 已同步修改
+
+- 本地 `.config`
+- CI `build-bootefi.yml` 的两个 job 都加了 `--disable CMDLINE_FROM_BOOTLOADER`
+
+### 这条发现的份量
+
+之前所有 QEMU 验证都是在"没有 dtb bootargs"的条件下做的，所以 `console=tty0`、
+`clk_ignore_unused` 都工作。**真机条件下这些参数全被忽略** —— 这是"QEMU 通过但真机黑屏"
+最合理的解释之一。如果真机黑屏的原因是这个，那这次修复就直接解决它。
