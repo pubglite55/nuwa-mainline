@@ -1,45 +1,75 @@
 #!/bin/busybox sh
-mkdir -p /sbin /usr/bin /usr/sbin /bin
-/bin/busybox --install -s /bin /sbin /usr/bin /usr/sbin
+# nuwa 自包含 initramfs：所有输出同时到屏幕(tty0)与内核日志
+/bin/busybox mount -t proc proc /proc 2>/dev/null
+/bin/busybox mount -t sysfs sysfs /sys 2>/dev/null
+/bin/busybox mount -t devtmpfs devtmpfs /dev 2>/dev/null
+/bin/busybox mkdir -p /dev/pts /dev/shm /tmp /run /sys/kernel/config
+/bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null
+/bin/busybox mount -t configfs none /sys/kernel/config 2>/dev/null
 
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
-mkdir -p /sys/kernel/config /sys/kernel/debug
-mount -t configfs none /sys/kernel/config 2>/dev/null || true
+# 关键：把后续所有输出打到屏幕
+exec >/dev/tty0 2>&1
 
-echo "nuwa-initramfs: start $(cat /proc/uptime)" > /dev/kmsg 2>/dev/null || true
+echo ""
+echo "=============================================="
+echo "  nuwa initramfs  |  mainline kernel + UEFI"
+echo "=============================================="
+echo "uptime : $(/bin/busybox cat /proc/uptime 2>/dev/null)"
+echo "cmdline: $(/bin/busybox cat /proc/cmdline 2>/dev/null)"
+echo "kernel : $(/bin/busybox uname -r 2>/dev/null)"
+echo ""
 
+echo "-- 加载驱动模块 --"
+for m in /lib/modules/*.ko; do
+  [ -f "$m" ] || continue
+  /bin/busybox insmod "$m" 2>/dev/null && echo "   ok  $(/bin/busybox basename "$m")"
+done
+for m in /lib/modules/*.ko; do
+  [ -f "$m" ] || continue
+  /bin/busybox insmod "$m" 2>/dev/null
+done
+echo ""
+
+echo "-- 显示与输入设备 --"
+for d in /sys/class/drm /sys/class/graphics /sys/class/input; do
+  echo "   $d: $(/bin/busybox ls $d 2>/dev/null | /bin/busybox tr '\n' ' ')"
+done
+echo ""
+
+echo "-- USB gadget (NCM) --"
 G=/sys/kernel/config/usb_gadget/nuwa
 if [ -d /sys/kernel/config/usb_gadget ]; then
-  mkdir -p $G
-  echo 0x1d6b > $G/idVendor
-  echo 0x0104 > $G/idProduct
-  mkdir -p $G/strings/0x409
-  echo nuwa > $G/strings/0x409/serialnumber
-  echo nuwa > $G/strings/0x409/manufacturer
-  echo nuwa > $G/strings/0x409/product
-  mkdir -p $G/configs/c.1/strings/0x409
-  echo ncm > $G/configs/c.1/strings/0x409/configuration
-  mkdir -p $G/functions/ncm.usb0
-  ln -sf $G/functions/ncm.usb0 $G/configs/c.1/ncm.usb0
-  UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
-  echo "nuwa-initramfs: udc=$UDC" > /dev/kmsg 2>/dev/null || true
-  if [ -n "$UDC" ]; then echo $UDC > $G/UDC; fi
+  /bin/busybox mkdir -p $G
+  echo 0x1d6b > $G/idVendor 2>/dev/null
+  echo 0x0104 > $G/idProduct 2>/dev/null
+  /bin/busybox mkdir -p $G/strings/0x409
+  echo nuwa > $G/strings/0x409/serialnumber 2>/dev/null
+  echo nuwa > $G/strings/0x409/manufacturer 2>/dev/null
+  echo nuwa > $G/strings/0x409/product 2>/dev/null
+  /bin/busybox mkdir -p $G/configs/c.1/strings/0x409
+  echo ncm > $G/configs/c.1/strings/0x409/configuration 2>/dev/null
+  /bin/busybox mkdir -p $G/functions/ncm.usb0 2>/dev/null
+  /bin/busybox ln -sf $G/functions/ncm.usb0 $G/configs/c.1/ncm.usb0 2>/dev/null
+  UDC=$(/bin/busybox ls /sys/class/udc 2>/dev/null | /bin/busybox head -1)
+  echo "   udc: ${UDC:-<none>}"
+  [ -n "$UDC" ] && echo "$UDC" > $G/UDC 2>/dev/null
+else
+  echo "   configfs 不可用"
 fi
 
 /bin/busybox sleep 2
-/bin/busybox ip link set usb0 up 2>/dev/null || true
-/bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null || true
-/bin/busybox telnetd -l /bin/sh 2>/dev/null || true
-# 黑盒探针：能振动就振动一下，让用户知道 initramfs 跑起来了
-for v in /sys/class/leds/vibrator /sys/class/timed_output/vibrator /sys/devices/virtual/timed_output/vibrator; do
-  [ -e "$v/brightness" ] && echo 80 > "$v/brightness" 2>/dev/null
-  [ -e "$v/enable" ] && echo 1 > "$v/enable" 2>/dev/null
-done
+/bin/busybox ip link set usb0 up 2>/dev/null
+/bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null
+echo "   usb0: $(/bin/busybox ip -4 addr show usb0 2>/dev/null | /bin/busybox grep inet)"
+/bin/busybox telnetd -l /bin/sh -p 23 2>/dev/null && echo "   telnetd 已启动 (192.168.0.1:23)"
+echo ""
 
-echo "nuwa-initramfs: ready $(cat /proc/uptime)" > /dev/kmsg 2>/dev/null || true
+echo "-- 网络接口 --"
+/bin/busybox ip -4 addr show 2>/dev/null | /bin/busybox grep -E "^[0-9]|inet"
+echo ""
+echo "=== 系统就绪：可 telnet 192.168.0.1 ==="
+echo "=== 120 秒后自动重启 ==="
+echo ""
 
-# 超时保护：10 分钟后自动重启回原系统
 /bin/busybox sleep 120
 /bin/busybox reboot -f

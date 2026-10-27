@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '.github/workflows/build-bootefi.yml'
+      - 'tools/init'
 
 permissions:
   contents: read
@@ -27,35 +28,29 @@ jobs:
           git clone --depth 1 --branch 7.0 https://github.com/alfaonyt/nuwa-mainline.git kc
           cd kc && git log --oneline -1
 
-      - name: 生成内嵌 initramfs
+      - name: 生成 initramfs 根目录
         run: |
           set -e
-          ROOT="$PWD/ir-root"
+          ROOT="$GITHUB_WORKSPACE/ir-root"
           rm -rf "$ROOT"
-          mkdir -p "$ROOT"/bin "$ROOT"/dev "$ROOT"/proc "$ROOT"/sys "$ROOT"/tmp
+          mkdir -p "$ROOT"/bin "$ROOT"/dev "$ROOT"/proc "$ROOT"/sys "$ROOT"/tmp "$ROOT"/lib/modules
           cp /bin/busybox "$ROOT/bin/busybox"
           cp tools/init "$ROOT/init"
           chmod 755 "$ROOT/init" "$ROOT/bin/busybox"
           file "$ROOT/bin/busybox"
-          (cd "$ROOT" && find . | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9) > "$PWD/initramfs.cpio.gz"
-          ls -l "$PWD/initramfs.cpio.gz"
 
-      - name: 配置自包含内核（内嵌 initramfs + 内置 cmdline）
+      - name: 配置自包含内核
         run: |
           set -e
           cd kc
           make ARCH=arm64 defconfig
           ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/sm8550.config
-          # 身份标识对齐 ABL
-          DTS=arch/arm64/boot/dts/qcom/sm8550-xiaomi-nuwa.dts
-          sed -i 's/qcom,msm-id = <[^;]*>;/qcom,msm-id = <0x25c 0x20000>;/' "$DTS"
-          sed -i 's/qcom,board-id = <[^;]*>;/qcom,board-id = <0x00 0x00>;/' "$DTS"
-          # 内嵌 initramfs 与命令行
-          ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/initramfs.cpio.gz"
+          ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/ir-root"
           ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7"
           ./scripts/config --enable CMDLINE_EXTEND
           ./scripts/config --enable EFI_STUB
-          # USB gadget 关键路径必须内建（initramfs 无模块）
+          ./scripts/config --enable FB_EFI
+          ./scripts/config --enable DRM_SIMPLEDRM
           ./scripts/config --enable USB_GADGET
           ./scripts/config --enable USB_DWC3
           ./scripts/config --enable USB_DWC3_QCOM
@@ -64,14 +59,30 @@ jobs:
           ./scripts/config --enable USB_F_NCM
           ./scripts/config --enable USB_ROLE_SWITCH
           ./scripts/config --enable PHY_QCOM_SNPS_FEMTO_V2
-          ./scripts/config --enable FB_EFI
-          ./scripts/config --enable DRM_SIMPLEDRM
           make ARCH=arm64 olddefconfig
-          grep -E "CONFIG_INITRAMFS_SOURCE|CONFIG_CMDLINE=|CONFIG_EFI_STUB|CONFIG_FB_EFI|CONFIG_DRM_SIMPLEDRM|CONFIG_USB_DWC3_QCOM|CONFIG_USB_F_NCM|CONFIG_USB_CONFIGFS_NCM" .config
+          grep -E "CONFIG_INITRAMFS_SOURCE|CONFIG_CMDLINE=|CONFIG_USB_DWC3_QCOM|CONFIG_USB_F_NCM" .config
 
-      - name: 构建内核
+      - name: 编译内核与模块
         run: |
           cd kc
+          make ARCH=arm64 -j"$(nproc)" Image modules
+
+      - name: 收集外设模块到 initramfs
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE/ir-root"
+          cd kc
+          find . -name "panel-samsung-amb673cp01-m2.ko" -o -name "fts*.ko" -o -name "snd-soc-cs35l41*.ko" | tee /tmp/modlist.txt
+          while read -r m; do
+            [ -n "$m" ] && cp "$m" "$ROOT/lib/modules/"
+          done < /tmp/modlist.txt
+          ls -l "$ROOT/lib/modules/"
+
+      - name: 重新打包内核（含模块）
+        run: |
+          set -e
+          cd kc
+          rm -f usr/initramfs_data.cpio* usr/.initramfs_data.* 2>/dev/null || true
           make ARCH=arm64 -j"$(nproc)" Image
           ls -l arch/arm64/boot/Image
           cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/BOOTAA64.EFI"
@@ -82,5 +93,4 @@ jobs:
           name: bootefi
           path: |
             BOOTAA64.EFI
-            initramfs.cpio.gz
           if-no-files-found: error
