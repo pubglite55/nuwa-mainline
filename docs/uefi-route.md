@@ -82,3 +82,48 @@ EFI stub 被 UEFI `LoadImage`+`StartImage` 时**没有 LoadOptions**，所以：
 3. 选中后内核是否启动、`console=tty0` 是否有输出
 4. initramfs 的 `/init` 是否建起 USB NCM（`192.168.0.1` + telnetd）
 5. 若成功 → 补模块（panel/touch/audio）到 initramfs
+
+
+## 增量改进（第二轮）
+
+### 1. init 输出到屏幕
+
+`tools/init` 现在挂载 devtmpfs 后立即 `exec >/dev/tty0 2>&1`，因此**整个 init 执行过程都显示在屏幕上**：
+
+```
+==============================================
+  nuwa initramfs  |  mainline kernel + UEFI
+==============================================
+uptime : ...
+cmdline: console=tty0 ignore_loglevel loglevel=7
+kernel : 7.0.0-sm8550
+-- 加载驱动模块 --
+   ok  panel-samsung-amb673cp01-m2.ko
+   ok  fts-spi.ko
+   ok  snd-soc-cs35l41-i2c.ko
+-- USB gadget (NCM) --
+   udc: a600000.dwc3
+   telnetd 已启动 (192.168.0.1:23)
+=== 系统就绪：可 telnet 192.168.0.1 ===
+```
+
+这是**第一次能在设备屏幕上看到我们自己的用户态日志**，比卡米标盲猜强太多。
+
+### 2. 外设模块打包进 initramfs
+
+```
+panel-samsung-amb673cp01-m2.ko   ← 面板（DRM_PANEL_SAMSUNG_AMB673CP01_M2=m）
+fts*.ko                          ← 触控（TOUCHSCREEN_ST_FTS_V521_SPI=m）
+snd-soc-cs35l41*.ko              ← 功放（SND_SOC_CS35L41_I2C=m）
+```
+
+CI 流程改为：`make Image modules` → 收集 `.ko` 到 `ir-root/lib/modules/` → 清除 `usr/initramfs_data.cpio*` → 重新 `make Image`（让内嵌 initramfs 包含模块）。
+
+### 3. 路径解析确认
+
+`UniXNUNormalizePath`：`Absolute = (Path[0] == '\\' || Path[0] == '/')`，所以 `unixnu.toml` 里
+`path = "\\EFI\\BOOT\\BOOTAA64.EFI"` 是**绝对路径**，写法正确。
+
+### 4. 备选：显示安全版
+
+若 `DRM_MSM=y` 抢占 framebuffer 导致屏幕无输出，可构建 `--disable DRM_MSM` 版本，让 `simpledrm` 直接用 UEFI GOP 输出内核日志。
