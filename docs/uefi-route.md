@@ -1992,3 +1992,65 @@ ABL 的 bootargs 里有一些本来有用的东西：
 之前所有 QEMU 验证都是在"没有 dtb bootargs"的条件下做的，所以 `console=tty0`、
 `clk_ignore_unused` 都工作。**真机条件下这些参数全被忽略** —— 这是"QEMU 通过但真机黑屏"
 最合理的解释之一。如果真机黑屏的原因是这个，那这次修复就直接解决它。
+
+
+### 验证：FORCE 确实生效
+
+用 **空 `-append`** 跑 QEMU（这样内核不可能从 bootloader 拿到任何参数）：
+
+```bash
+qemu-system-aarch64 -M virt -cpu max -m 2G -smp 2 \
+  -kernel arch/arm64/boot/Image -append "" -nographic
+```
+
+日志：
+
+```
+[    0.000000] Kernel command line: console=tty0 console=ttyAMA0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1
+[   17.892494] Run /init as init process
+[   18.392655] nuwa-init: bound to /dev/kmsg
+```
+
+**`-append` 是空的，内核命令行却是完整的** ⇒ `CONFIG_CMDLINE_FORCE` 确实生效，
+不再依赖 bootloader 传参。这是修复有效的硬证据。
+
+### 双 console 策略
+
+cmdline 里放了两个 console：
+
+```
+console=tty0 console=ttyAMA0 ...
+```
+
+内核的行为正好满足两边需求：
+
+| 环境 | `tty0` | `ttyAMA0` | 实际输出到 |
+|---|---|---|---|
+| **真机** | 存在 ✓ | 不存在（内核跳过） | **tty0 屏幕** |
+| **QEMU** | 不存在（跳过） | 存在 ✓ | **ttyAMA0 串口** |
+
+这样一个 cmdline 同时服务真机和 QEMU 验证，不需要维护两份配置。
+
+### 这条修复的完整链条
+
+```
+ABL 往 dtb 的 /chosen/bootargs 塞 1100 字符
+    ↓
+UniXNU LoadImage(..., NULL, 0, ...) → LoadOptions 为空
+    ↓
+内核 CMDLINE_FROM_BOOTLOADER=y → 退回读 dtb bootargs
+    ↓
+CONFIG_CMDLINE 里的 console=tty0 / clk_ignore_unused / fbcon=rotate:1 全部失效
+    ↓
+真机：无屏幕输出 + 显示资源被回收 → 黑屏
+```
+
+修复后：
+
+```
+CONFIG_CMDLINE_FORCE=y → 忽略 bootloader 参数，强制用 CONFIG_CMDLINE
+    ↓
+console=tty0 生效 → 屏幕有输出
+clk_ignore_unused 生效 → 显示资源不被回收
+fbcon=rotate:1 生效 → 文字方向正确
+```
