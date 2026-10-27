@@ -553,3 +553,38 @@ nuwa 的触控是 `&spi4` 上的 `fts@0`（`compatible = "st,fts"`），独立�
 > 内核在交接后静默挂死 → **想办法把崩溃打到屏幕上（例如借用固件画面的 earlycon），常能直接定位**。
 
 这正是 nodrm 版（`simpledrm` 借用 UEFI framebuffer + `console=tty0`）的设计依据。
+
+
+## 第十轮：无线（Wi-Fi/BT）路线要点
+
+`experience/wireless.md`：nuwa 是 **WCN6856（QCA6490）**，PCIe 接 ath11k、UART 接 hci_qca。
+
+### Wi-Fi 六步
+
+1. 原厂只读取证：PCI 子系统 ID、固件+board 版本组合、MAC 来源、监管区域、SAR 功率上限
+2. 电源时序节点 `qcom,wcnXXXX-pmu`，多路供电逐路确认（**PCIe PHY 供电最难找证据**）
+3. **PCIe 控制器和 PHY 内建**（已加 `PHY_QCOM_QMP_PCIE=y`）；**保持 IOMMU 正常隔离，不要 `iommu.passthrough=1`**
+4. 驱动补丁优先上游/社区，按提交导入
+5. 固件**按版本组合整套使用**；MAC 从本机数据分区读，在 NetworkManager 之前设置
+6. 按原厂方式下发 SAR 功率上限
+
+### 三个已知坑（提前记下）
+
+| 现象 | 原因 |
+|---|---|
+| 5 GHz 80 MHz 关联 6 秒后断线，桌面误报"密码错误" | 原厂驱动每次启动下发 SAR 功率上限，主线不下发；超 ~20 dBm 链路冻结 |
+| 5 GHz 扫描为 0 | 监管区域缺 6 GHz 规则 → 频段计算把单射频缩成只剩 2.4 GHz（有社区补丁） |
+| IOMMU 正常隔离时固件加载失败 | `iommu-map` 改两 cell 后 `config_sid` 解析写错 stream ID（主线 7.2 前后） |
+
+> 注意：**只换 `board.bin` 的实验毫无意义** —— 驱动先在 `board-2.bin` 按完整键查找，
+> 命中后不再读 `board.bin`。每次固件实验都要在日志里看到完整键匹配，否则无法归因。
+
+### 蓝牙
+
+UART 节点 + 父串行引擎启用；固件与原厂版本对应（需早期加载则放 initramfs）；
+**地址从本机数据分区读，不要写死在设备树里**；在 `bluetooth.service` 之前写入。
+
+### 当前阶段不做的原因
+
+Wi-Fi/BT 需要从原厂系统提取固件与 board 数据（`/vendor/firmware`、`/persist`），
+属阶段 6 外设工作。**首版目标是启动 + 显示 + USB 网络**，Wi-Fi 留到链路稳定后。
