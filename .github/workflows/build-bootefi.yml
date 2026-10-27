@@ -59,6 +59,32 @@ jobs:
           ./scripts/config --enable USB_F_NCM
           ./scripts/config --enable USB_ROLE_SWITCH
           ./scripts/config --enable PHY_QCOM_SNPS_FEMTO_V2
+          # 启动/显示/输入/存储依赖链整链内建（经验库：=m 且无模块目录会静默缺失）
+          ./scripts/config --enable QCOM_GPI_DMA
+          ./scripts/config --enable SPI_QCOM_GENI
+          ./scripts/config --enable SPI_QCOM_QSPI
+          ./scripts/config --enable POWER_RESET_QCOM_PON
+          ./scripts/config --enable QCOM_PD_MAPPER
+          ./scripts/config --enable QRTR
+          ./scripts/config --enable QRTR_SMD
+          ./scripts/config --enable RTC_DRV_PM8XXX
+          ./scripts/config --enable NVMEM_REBOOT_MODE
+          ./scripts/config --enable NVMEM_SPMI_SDAM
+          ./scripts/config --enable BATTERY_QCOM_BATTMGR
+          ./scripts/config --enable QCOM_CPUCP_MBOX
+          ./scripts/config --enable OVERLAY_FS
+          ./scripts/config --enable PHY_QCOM_QMP_PCIE
+          ./scripts/config --enable RFKILL
+          ./scripts/config --enable CLK_QCOM_DISPCC_SM8550
+          ./scripts/config --enable QCOM_CLK_RPMH
+          ./scripts/config --enable PINCTRL_SM8550
+          ./scripts/config --enable PINCTRL_SM8550_LPASS_LPI
+          ./scripts/config --enable QCOM_SMEM
+          ./scripts/config --enable QCOM_SMD_RPM
+          ./scripts/config --enable QCOM_RPMH
+          ./scripts/config --enable ARM_SMMU
+          ./scripts/config --enable QCOM_LLCC
+          ./scripts/config --enable SCSI_UFS_QCOM
           make ARCH=arm64 olddefconfig
           grep -E "CONFIG_INITRAMFS_SOURCE|CONFIG_CMDLINE=|CONFIG_USB_DWC3_QCOM|CONFIG_USB_F_NCM" .config
 
@@ -137,6 +163,32 @@ jobs:
           ./scripts/config --enable USB_F_NCM
           ./scripts/config --enable USB_ROLE_SWITCH
           ./scripts/config --enable PHY_QCOM_SNPS_FEMTO_V2
+          # 启动/显示/输入/存储依赖链整链内建（经验库：=m 且无模块目录会静默缺失）
+          ./scripts/config --enable QCOM_GPI_DMA
+          ./scripts/config --enable SPI_QCOM_GENI
+          ./scripts/config --enable SPI_QCOM_QSPI
+          ./scripts/config --enable POWER_RESET_QCOM_PON
+          ./scripts/config --enable QCOM_PD_MAPPER
+          ./scripts/config --enable QRTR
+          ./scripts/config --enable QRTR_SMD
+          ./scripts/config --enable RTC_DRV_PM8XXX
+          ./scripts/config --enable NVMEM_REBOOT_MODE
+          ./scripts/config --enable NVMEM_SPMI_SDAM
+          ./scripts/config --enable BATTERY_QCOM_BATTMGR
+          ./scripts/config --enable QCOM_CPUCP_MBOX
+          ./scripts/config --enable OVERLAY_FS
+          ./scripts/config --enable PHY_QCOM_QMP_PCIE
+          ./scripts/config --enable RFKILL
+          ./scripts/config --enable CLK_QCOM_DISPCC_SM8550
+          ./scripts/config --enable QCOM_CLK_RPMH
+          ./scripts/config --enable PINCTRL_SM8550
+          ./scripts/config --enable PINCTRL_SM8550_LPASS_LPI
+          ./scripts/config --enable QCOM_SMEM
+          ./scripts/config --enable QCOM_SMD_RPM
+          ./scripts/config --enable QCOM_RPMH
+          ./scripts/config --enable ARM_SMMU
+          ./scripts/config --enable QCOM_LLCC
+          ./scripts/config --enable SCSI_UFS_QCOM
           make ARCH=arm64 olddefconfig
       - name: 编译
         run: |
