@@ -1915,21 +1915,61 @@ CONFIG_CMDLINE_FROM_BOOTLOADER=y
 
 **这完全能解释"真机黑屏但 QEMU 正常"** —— QEMU 里没有 dtb bootargs，所以内核用了 `CONFIG_CMDLINE`。
 
-### 修复
+### 修复：必须用 CMDLINE_FORCE（arm64 没有 EXTEND）
+
+**关键发现**：arm64 的 Kconfig choice **只有两项**，没有 `CMDLINE_EXTEND`：
+
+```kconfig
+# arch/arm64/Kconfig:2540
+choice
+    prompt "Kernel command line type"
+    depends on CMDLINE != ""
+    default CMDLINE_FROM_BOOTLOADER
+
+config CMDLINE_FROM_BOOTLOADER
+    bool "Use bootloader kernel arguments if available"
+
+config CMDLINE_FORCE
+    bool "Always use the default kernel command string"
+endchoice
+```
+
+（`CMDLINE_EXTEND` 只存在于 powerpc 和部分架构的 Kconfig 里。）
+
+所以 `--enable CMDLINE_EXTEND` 在 arm64 上是**无效选项**，
+`olddefconfig` 会把它丢掉并重新选 default（`FROM_BOOTLOADER`）。
+这也解释了第一次修复为什么没生效。
+
+**正确做法**：
 
 ```
-CONFIG_CMDLINE_FROM_BOOTLOADER=n
-CONFIG_CMDLINE_EXTEND=y
+# CONFIG_CMDLINE_FROM_BOOTLOADER is not set
+CONFIG_CMDLINE_FORCE=y
 CONFIG_CMDLINE="console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1"
 ```
 
-`CMDLINE_EXTEND` 的语义是：**bootloader cmdline + " " + CONFIG_CMDLINE**，
-即保留 ABL 的有用参数（如 `msm_drm.dsi_display0`、`rootwait`），并把我们的参数**追加在后面**。
+**注意**：`scripts/config --disable CMDLINE_FROM_BOOTLOADER` 也**不能**可靠工作
+（choice 型选项需要同时写 `# ... is not set` 和选中另一项），
+必须直接编辑 `.config` 里的那三行。
 
-**追加在后 = 优先级更高**，因为内核解析同名参数时后者覆盖前者。所以：
+### FORCE 的代价：丢失 ABL 的有用参数
 
-- `console=ttyMSM0,115200n8`（ABL）+ `console=tty0`（我们）→ **两个 console 都注册，tty0 成为默认**
-- `loglevel=6`（ABL）+ `loglevel=7`（我们）→ **生效的是 7**
+ABL 的 bootargs 里有一些本来有用的东西：
+
+| ABL 参数 | 作用 | 我们是否需 |
+|---|---|---|
+| `msm_drm.dsi_display0=qcom,mdss_dsi_m2_38_0c_0a_dsc_cmd:` | 指定面板 | **不需要**（我们禁用 msm） |
+| `msm_drm.oled_wp=0bb00c46` | OLED 白点校准 | **不需要**（同上） |
+| `rootwait ro init=/init` | 根文件系统与 init | **不需要**（initramfs 自带，默认就是 `/init`） |
+| `loglevel=6` | 日志级别 | 我们用自己的 `loglevel=7` |
+| `block2mtd...` | MTD 模拟 | **不需要**（甚至有害） |
+| `silent_boot.mode=nonsilent` | 原厂启动画面 | 不需要 |
+
+⇒ 阶段 1（自包含 initramfs + efifb）**完全可以丢弃 ABL 的 bootargs**，用 FORCE 更干净。
+
+**如果将来需要 ABL 的某个参数**（例如阶段 2 要用 `msm_drm.dsi_display0` 做原生显示），
+届时改成 `FROM_BOOTLOADER` 并把这些参数写进 CONFIG_CMDLINE 里，或者用 UniXNU 的
+`[[dt_patch]]` 直接改 dtb 的 `/chosen/bootargs`。
 
 ### 长度检查
 

@@ -48,7 +48,7 @@ jobs:
           ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/ir-root"
           ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1"
           ./scripts/config --disable CMDLINE_FROM_BOOTLOADER
-          ./scripts/config --enable CMDLINE_EXTEND
+          ./scripts/config --enable CMDLINE_FORCE
           ./scripts/config --enable EFI_STUB
           ./scripts/config --enable FB_EFI
           ./scripts/config --enable DRM_SIMPLEDRM
@@ -143,7 +143,7 @@ jobs:
           ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/ir-root"
           ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1"
           ./scripts/config --disable CMDLINE_FROM_BOOTLOADER
-          ./scripts/config --enable CMDLINE_EXTEND
+          ./scripts/config --enable CMDLINE_FORCE
           ./scripts/config --enable EFI_STUB
           ./scripts/config --enable FB_EFI
           ./scripts/config --enable DRM_SIMPLEDRM
