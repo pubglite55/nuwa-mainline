@@ -7,15 +7,18 @@
 /bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null
 /bin/busybox mount -t configfs none /sys/kernel/config 2>/dev/null
 
-# 关键：把后续所有输出打到可见设备（按可用性兜底）
-for OUT in /dev/tty0 /dev/console /dev/ttyAMA0; do
-  if [ -c "$OUT" ] || [ -e "$OUT" ]; then
-    exec >"$OUT" 2>&1
-    break
-  fi
-done
-# 兜底：同时把关键信息写进内核日志（即使屏幕不可用也能从 pstore/dmesg 取）
-echo "nuwa-init: output bound" > /dev/kmsg 2>/dev/null || true
+# 关键：所有输出走内核日志（/dev/kmsg）
+# 这样 console=tty0 时屏幕上能看到，同时 dmesg/pstore 也有记录，
+# 不会因为 /dev/tty0 或 /dev/console 打不开而全部丢失。
+if [ -w /dev/kmsg ]; then
+  exec >/dev/kmsg 2>&1
+  echo "nuwa-init: bound to /dev/kmsg"
+else
+  for OUT in /dev/tty0 /dev/console /dev/ttyAMA0; do
+    if [ -e "$OUT" ]; then exec >"$OUT" 2>&1; break; fi
+  done
+  echo "nuwa-init: bound to fallback"
+fi
 
 echo ""
 echo "=============================================="
@@ -46,29 +49,50 @@ echo ""
 echo "-- USB gadget (NCM) --"
 G=/sys/kernel/config/usb_gadget/nuwa
 if [ -d /sys/kernel/config/usb_gadget ]; then
-  /bin/busybox mkdir -p $G
+  /bin/busybox mkdir -p $G 2>/dev/null
+  echo 0x0200 > $G/bcdUSB 2>/dev/null
+  echo 0x0100 > $G/bcdDevice 2>/dev/null
   echo 0x1d6b > $G/idVendor 2>/dev/null
   echo 0x0104 > $G/idProduct 2>/dev/null
-  /bin/busybox mkdir -p $G/strings/0x409
-  echo nuwa > $G/strings/0x409/serialnumber 2>/dev/null
+  /bin/busybox mkdir -p $G/strings/0x409 2>/dev/null
+  echo 3705933 > $G/strings/0x409/serialnumber 2>/dev/null
   echo nuwa > $G/strings/0x409/manufacturer 2>/dev/null
-  echo nuwa > $G/strings/0x409/product 2>/dev/null
-  /bin/busybox mkdir -p $G/configs/c.1/strings/0x409
+  echo "nuwa mainline" > $G/strings/0x409/product 2>/dev/null
+  /bin/busybox mkdir -p $G/configs/c.1/strings/0x409 2>/dev/null
   echo ncm > $G/configs/c.1/strings/0x409/configuration 2>/dev/null
+  echo 250 > $G/configs/c.1/MaxPower 2>/dev/null
   /bin/busybox mkdir -p $G/functions/ncm.usb0 2>/dev/null
   /bin/busybox ln -sf $G/functions/ncm.usb0 $G/configs/c.1/ncm.usb0 2>/dev/null
+
   UDC=$(/bin/busybox ls /sys/class/udc 2>/dev/null | /bin/busybox head -1)
   echo "   udc: ${UDC:-<none>}"
-  [ -n "$UDC" ] && echo "$UDC" > $G/UDC 2>/dev/null
+  if [ -n "$UDC" ]; then
+    echo "$UDC" > $G/UDC 2>/dev/null
+    echo "   bound: $(/bin/busybox cat $G/UDC 2>/dev/null)"
+  else
+    echo "   !! 没有 UDC（dwc3 未绑定）"
+    echo "   !! dwc3 相关 dmesg："
+    /bin/busybox dmesg 2>/dev/null | /bin/busybox grep -iE "dwc3|udc|phy.*usb" | /bin/busybox tail -8
+  fi
 else
   echo "   configfs 不可用"
 fi
 
-/bin/busybox sleep 2
-/bin/busybox ip link set usb0 up 2>/dev/null
-/bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null
-echo "   usb0: $(/bin/busybox ip -4 addr show usb0 2>/dev/null | /bin/busybox grep inet)"
-/bin/busybox telnetd -l /bin/sh -p 23 2>/dev/null && echo "   telnetd 已启动 (192.168.0.1:23)"
+# 等 usb0 出现（最多 10 秒），不要用固定 sleep
+i=0
+while [ $i -lt 20 ]; do
+  if [ -e /sys/class/net/usb0 ]; then break; fi
+  /bin/busybox sleep 0.5
+  i=$((i+1))
+done
+if [ -e /sys/class/net/usb0 ]; then
+  /bin/busybox ip link set usb0 up 2>/dev/null
+  /bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null
+  echo "   usb0: $(/bin/busybox ip -4 addr show usb0 2>/dev/null | /bin/busybox grep inet)"
+else
+  echo "   !! usb0 未出现（等待 10 秒超时）"
+fi
+/bin/busybox telnetd -l /bin/sh -p 23 2>/dev/null && echo "   telnetd 已启动 (192.168.0.1:23)" || echo "   !! telnetd 启动失败"
 echo ""
 
 echo "-- 网络接口 --"
