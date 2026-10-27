@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   bootefi:
+
+  bootefi:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     steps:
@@ -93,4 +95,63 @@ jobs:
           name: bootefi
           path: |
             BOOTAA64.EFI
+          if-no-files-found: error
+
+  bootefi-nodrm:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev \
+            cpio kmod device-tree-compiler python3 zstd busybox-static
+      - name: 克隆社区内核
+        run: git clone --depth 1 --branch 7.0 https://github.com/alfaonyt/nuwa-mainline.git kc
+      - name: 生成 initramfs 根目录
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE/ir-root"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"/bin "$ROOT"/dev "$ROOT"/proc "$ROOT"/sys "$ROOT"/tmp "$ROOT"/lib/modules
+          cp /bin/busybox "$ROOT/bin/busybox"
+          cp tools/init "$ROOT/init"
+          chmod 755 "$ROOT/init" "$ROOT/bin/busybox"
+      - name: 配置（禁用 DRM_MSM，保留 simpledrm）
+        run: |
+          set -e
+          cd kc
+          make ARCH=arm64 defconfig
+          ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/sm8550.config
+          ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/ir-root"
+          ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7 keep_bootcon"
+          ./scripts/config --enable CMDLINE_EXTEND
+          ./scripts/config --enable EFI_STUB
+          ./scripts/config --enable FB_EFI
+          ./scripts/config --enable DRM_SIMPLEDRM
+          ./scripts/config --disable DRM_MSM
+          ./scripts/config --enable USB_GADGET
+          ./scripts/config --enable USB_DWC3
+          ./scripts/config --enable USB_DWC3_QCOM
+          ./scripts/config --enable USB_CONFIGFS
+          ./scripts/config --enable USB_CONFIGFS_NCM
+          ./scripts/config --enable USB_F_NCM
+          ./scripts/config --enable USB_ROLE_SWITCH
+          ./scripts/config --enable PHY_QCOM_SNPS_FEMTO_V2
+          make ARCH=arm64 olddefconfig
+      - name: 编译
+        run: |
+          cd kc
+          make ARCH=arm64 -j"$(nproc)" Image modules
+          ROOT="$GITHUB_WORKSPACE/ir-root"
+          find . -name "panel-samsung-amb673cp01-m2.ko" -o -name "fts*.ko" -o -name "snd-soc-cs35l41*.ko" | while read -r m; do [ -n "$m" ] && cp "$m" "$ROOT/lib/modules/"; done
+          rm -f usr/initramfs_data.cpio* usr/.initramfs_data.* 2>/dev/null || true
+          make ARCH=arm64 -j"$(nproc)" Image
+          cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/BOOTAA64-NODRM.EFI"
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootefi-nodrm
+          path: BOOTAA64-NODRM.EFI
           if-no-files-found: error
