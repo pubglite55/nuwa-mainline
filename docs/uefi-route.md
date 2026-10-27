@@ -200,3 +200,82 @@ ir-root/bin/busybox: ELF 64-bit LSB executable, ARM aarch64, version 1 (GNU/Linu
 | cmdline | `CONFIG_CMDLINE="console=tty0 ignore_loglevel loglevel=7"` |
 | USB 内建 | `USB_DWC3_QCOM=y` / `USB_F_NCM=y` / `USB_CONFIGFS_NCM=y` |
 | ESP FAT | 卷标 NUNIXNU / NUSHELL / NUNODRM |
+
+
+## ★ 第五轮：找到 FAT 挂载的关键约束（重大修正）
+
+### 来源
+
+`pubglite55/UniXNU-nuwa` 的 `NUWA-PORT.md` 与 `scripts/build-sheng-payload.py` 记录了**已在本机验证过的启动链**：
+
+```
+ABL → BootShim → UEFI → BDS → UniXNU
+  → Fat attaches NUWAESP → \EFI\UniXNU\unixnu.toml
+  → 内核入口
+```
+
+### 关键约束 1：UFS 的逻辑块是 4 KiB
+
+`board.toml`：
+```toml
+[userdata]
+first_lba = 0x2f7840
+last_lba  = 0x3afc3fa
+lba_bytes = 4096          # ← 4 KiB
+```
+
+`build-sheng-payload.py`：
+```
+payload.py formats with mformat -M 4096 -T size_mib*256 and no -F:
+with 4 KiB sectors the image has 48,128 clusters, below the 65,525 that
+FAT32 requires, so the volume is FAT16.
+```
+
+**我们此前用 `mkfs.vfat` 默认 512 B 扇区做的 FAT32，与 UFS 的 4 KiB LBA 不匹配** ——
+这极可能就是 `vendor_boot_a` 上的 ESP 没被 FatDxe 挂载的原因。
+
+### 关键约束 2：payload 放 boot_b（192 MiB）
+
+`NUWA-PORT.md`：
+> The payload is therefore a 4 KiB FAT16 volume written bare into the UFS `boot_b`
+> partition (192 MiB), which Fat attaches as `NUWAESP`.
+
+`boot_b` 与 `boot_a` 同为 201,326,592 字节，正好容纳。
+
+### 关键约束 3：用 dd 写，不用 fastboot flash:raw
+
+> `boot_b` payload is written with `dd` (`fastboot flash:raw` wraps the image in a
+> boot header, which Fat cannot parse).
+
+普通的 `fastboot flash boot_b xxx.img` 是原样写入，应可用；`flash:raw` 会加 header，不可用。
+
+### 关键约束 4：vbmeta_a 必须带 flags 0x3
+
+> `vbmeta_a` must carry flags `0x3`, otherwise the ABL refuses to start `boot_a`.
+
+我们的 `Mu-nuwa.img` 目前能启动，说明当前 vbmeta 状态可接受；若某次刷完回 fastboot，需检查此项。
+
+### 已生成的正确 payload
+
+`other/payload-bootb.img`（201,326,592 字节）
+
+BPB 验证：
+```
+bytes/sector : 4096      ← 与 UFS LBA 一致
+sectors/clust: 1
+cluster bytes: 4096
+FAT type     : FAT16/12  （48,128 簇 < 65,525）
+卷标         : NUWAESP
+内容         : \EFI\BOOT\BOOTAA64.EFI（自包含内核 49.2 MB）
+               \EFI\UniXNU\unixnu.toml
+```
+
+### 下一步验证（设备回来后首选）
+
+```powershell
+.\tools\flash-uefi.ps1 -BootB
+```
+
+即：`boot_a` ← UEFI 固件，`boot_b` ← 4 KiB FAT16 payload。
+
+这条路径的每一环都有社区在**同一台设备**上的验证记录，比我们之前 512 B FAT32 的尝试更有依据。
