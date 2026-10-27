@@ -2054,3 +2054,38 @@ console=tty0 生效 → 屏幕有输出
 clk_ignore_unused 生效 → 显示资源不被回收
 fbcon=rotate:1 生效 → 文字方向正确
 ```
+
+
+### 配套检查：fbcon 的依赖链是否完整
+
+`fbcon=rotate:1` 要生效，需要整条链都编进内核。逐项核对：
+
+| 配置 | 值 | 作用 |
+|---|---|---|
+| `CONFIG_FB=y` | ✅ | framebuffer 子系统 |
+| `CONFIG_FB_EFI=y` | ✅ | efifb（继承 UEFI 的 framebuffer） |
+| `CONFIG_FB_CORE=y` | ✅ | fb 核心 |
+| `CONFIG_FB_CFB_FILLRECT` / `COPYAREA` / `IMAGEBLIT` | ✅ | 软件渲染原语 |
+| `CONFIG_VT=y` | ✅ | 虚拟终端 |
+| `CONFIG_VT_CONSOLE=y` | ✅ | VT 作为 console |
+| `CONFIG_FRAMEBUFFER_CONSOLE=y` | ✅ | **fbcon 本体** |
+| `CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y` | ✅ | 自动检测主显示 |
+
+⇒ `fbcon=rotate:1` 有完整的执行环境。
+
+### FORCE 丢弃的 ABL 参数逐项核对
+
+| ABL 参数 | 丢弃后影响 |
+|---|---|
+| `console=ttyMSM0,115200n8` | 无 —— 我们用 `console=tty0`（屏幕）和 `console=ttyAMA0`（QEMU） |
+| `rootwait ro init=/init` | 无 —— initramfs 不需要 root，默认 init 就是 `/init`（QEMU 日志已验证 `Run /init as init process`） |
+| `loglevel=6` | 无 —— 我们用 7（更详细） |
+| `msm_drm.dsi_display0=...` | 无 —— 我们禁用 `DRM_MSM`，显示走 efifb |
+| `msm_drm.oled_wp=0bb00c46` | 无 —— 同上 |
+| `qcom_geni_serial.con_enabled=0` | 无 —— 不用 GENI 串口 |
+| `block2mtd.block2mtd=/dev/block/sda16` | 无 —— 甚至有害（会把分区当 MTD） |
+| `silent_boot.mode=nonsilent` | 无 —— 原厂启动画面控制 |
+| `kpti=0` / `kasan=off` 等 | 无 —— 性能/调试调优，我们用默认 |
+| `video=vfb:640x400,bpp=32` | 无 —— 虚拟 framebuffer，不需要 |
+
+**结论**：FORCE 丢弃的参数对阶段 1（自包含 initramfs + efifb）全部无关。
