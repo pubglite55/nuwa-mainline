@@ -25,13 +25,23 @@ ABL 直启路线已放弃（dtb 强校验 + 无 console 输出）。改走社区
 | `esp-nuwa-nodrm.img` | 64 MB | 512 B FAT32 nodrm 版 |
 | `esp-shell.img` | 64 MB | UEFI Shell + nodrm 内核（诊断 + 手动启动） |
 
-## 自包含内核（BOOTAA64.EFI）
+## 自包含内核
 
-- 内核：社区 7.0 + nuwa 补丁（`alfaonyt/nuwa-mainline`）
-- 内嵌 initramfs（`/init` + busybox + 三个外设模块）
-- 内置 cmdline：`console=tty0 ignore_loglevel loglevel=7`
-- USB 全内建：`USB_DWC3_QCOM=y`、`USB_F_NCM=y`、`USB_CONFIGFS_NCM=y`
-- 已验证：PE32+ / subsystem 10（EFI application）✓
+三条独立路径（详见 [INDEX.md](INDEX.md)）：
+
+| 路径 | 内核 | 显示机制 | 来源 |
+|---|---|---|---|
+| A | 49.3 MB | `DRM_MSM=y` | CI 社区 7.0 |
+| B | 47.8 MB | `DRM_SIMPLEDRM` | CI 社区 7.0 |
+| **C** | **44.25 MB** | **`FB_EFI=y` 内建 efifb** | 本地 7.4 + nuwa dts |
+
+C 路径已通过 QEMU 端到端验证（内核启动 + /init 执行 + applet 自检全 OK）。
+
+**内建清单**（全部 `=y`，无模块依赖）：
+USB（DWC3/QCOM/NCM/configfs/role-switch）、网络（NET/INET/PACKET）、
+显示（FB_EFI）、触控（ST_FTS_V521_SPI + INPUT_EVDEV）、电源键（POWER_RESET_QCOM_PON）、
+GPIO 按键（INPUT_GPIO_KEYS + KEYBOARD_GPIO）、存储（BLK_DEV_SD/UFSHCD/SCSI_UFS_QCOM/EXT4）、
+PINCTRL_SM8550、ARM_SMMU、QCOM_LLCC。
 
 ## init 的行为（可在屏幕上看到）
 
