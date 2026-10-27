@@ -36,6 +36,25 @@
 
 哈希清单见 [artifact-hashes.md](artifact-hashes.md)（15 项）。
 
+### 结构验收结果（2026-10-28）
+
+逐个用 mtools 检查，全部通过：
+
+| 镜像 | 扇区 | /EFI/BOOT | /EFI/UniXNU | /Linux | startup.nsh |
+|---|---|---|---|---|---|
+| payload-bootb-efifb.img | **4096** | ✓ | ✓ | — | — |
+| payload-bootb.img | **4096** | ✓ | ✓ | — | — |
+| payload-bootb-min.img | **4096** | ✓ | ✓ | — | — |
+| esp-efifb.img | 512 | ✓ | ✓ | — | — |
+| esp-nuwa.img | 512 | ✓ | ✓ | — | — |
+| esp-nuwa-nodrm.img | 512 | ✓ | ✓ | — | — |
+| esp-shell.img | 512 | ✓ | — | ✓ | ✓（657 B） |
+| esp-refind.img | 512 | ✓ | — | ✓ | — |
+| vendor_boot-initrd-esp.img | VNDRBOOT v4 | （ramdisk 内） | | | |
+
+**判读**：4 KiB 组的扇区值全部是 4096（符合 UFS 要求），512 B 组全部是 512，
+Shell 盘的 `startup.nsh` 存在，rEFInd 盘的内核在 `/Linux`。
+
 ## 内核（4 个变体）
 
 | 变体 | 大小 | 显示机制 | 来源 |
