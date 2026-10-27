@@ -217,3 +217,42 @@ https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04-preinstalled-desk
 | 安装脚本 | ✅ `install-rootfs.sh` 语法通过 |
 | 备选镜像 | ✅ URL 已确认（2.85 GiB） |
 | **实际安装** | ⏳ 需要设备 |
+
+
+### 阶段 2 的 UFS 前提已确认
+
+挂 rootfs 需要内核侧的 UFS 驱动工作。逐项核对：
+
+**dts 侧**（`sm8550-xiaomi-nuwa.dts`）：
+
+```dts
+&ufs_mem_hc {
+    reset-gpios = <&tlmm 210 GPIO_ACTIVE_LOW>;
+    vcc-supply = <&vreg_l17b_2p5>;
+    vcc-max-microamp = <1300000>;
+    vccq-supply = <&vreg_l1g_1p2>;
+    vccq-max-microamp = <1200000>;
+    vdd-hba-supply = <&vreg_l3g_1p2>;
+    status = "okay";
+};
+
+&ufs_mem_phy {
+    vdda-phy-supply = <&vreg_l1d_0p88>;
+    ...
+};
+```
+
+**内核侧**：
+
+| 配置 | 值 |
+|---|---|
+| `CONFIG_SCSI_UFSHCD=y` | ✅ |
+| `CONFIG_SCSI_UFS_QCOM=y` | ✅（本轮从 `=m` 改为 `=y`） |
+| `CONFIG_BLK_DEV_SD=y` | ✅ |
+| `CONFIG_EXT4_FS=y` | ✅ |
+
+⇒ **内核侧 UFS 链路完整**，阶段 2 的 `root=PARTLABEL=nuwa-root rootwait` 有执行基础。
+
+**注意一个区别**：UEFI 的 UFSDxe（读 payload 用）和内核的 ufs_qcom 驱动（读 rootfs 用）
+是**两套独立实现**。UEFI 那边是预编译二进制（行为未知），内核这边是主线源码（已确认配置完整）。
+所以即使 UEFI 的 UFSDxe 有问题，内核侧挂 rootfs 仍可能正常。
