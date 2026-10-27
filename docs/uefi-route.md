@@ -1532,3 +1532,53 @@ USE_CUSTOM_DISPLAY_DRIVER      = 1
 | `TsensDxe` / `DDRInfoDxe` | 温度/内存信息 | 诊断用 |
 
 **注意**：这些是 UEFI 阶段的驱动，它们建立的硬件状态会被内核继承（或在 `ExitBootServices` 时被内核重置）。
+
+
+## 第二十七轮：最小诊断镜像已通过 QEMU 验证
+
+### 设计
+
+`tools/init-min`：
+
+```sh
+#!/bin/busybox sh
+mkdir -p /proc /sys /dev /tmp
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+echo "nuwa-min: start $(cat /proc/uptime)" > /dev/kmsg
+sleep 120
+echo "nuwa-min: timeout, rebooting" > /dev/kmsg
+reboot -f
+```
+
+只做三件事：挂载、打一行、超时重启。没有任何可能出错的环节（不碰 configfs、不建 gadget、不启 telnetd）。
+
+### QEMU 验证结果
+
+```
+[17.006898] Run /init as init process
+[17.383205] nuwa-min: start 9.04 2.33
+```
+
+- `/init` 被执行 ✓
+- 打印了 uptime ✓
+- **没有** `nuwa-init`、`busybox applet` 等完整版特征 ✓（说明确实是精简版）
+
+### 产物
+
+`other/payload-bootb-min.img`（192 MiB，4 KiB FAT16，卷标 NUWAMIN，OEM=MTOO4043）
+`other/bootefi-efifb/BOOTAA64-MIN.EFI`（44.25 MiB）
+
+刷写：`tools/flash-uefi.ps1 -Min`
+
+### 它在真机上的判读价值
+
+| 屏幕表现 | 结论 |
+|---|---|
+| 出现 `nuwa-min: start <uptime>` | **内核 + initramfs + /init 全链路正常** → 问题一定在完整 init 的某个功能里 |
+| 有内核日志但无 `nuwa-min` | initramfs 没解开，或 `/init` 没执行 |
+| 黑屏有背光 | 内核没起 / 显示没继承 |
+| 全黑无反应 | UEFI 根本没加载到内核 |
+
+**这是把"黑屏"这个模糊现象拆成四层的第一把手术刀。**
