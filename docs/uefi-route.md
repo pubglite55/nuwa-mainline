@@ -705,3 +705,42 @@ open → hw_params → prepare → DSP 接受播放图 → 功放启动
 1. 我先跑 `run-test.ps1` 完成刷机与机器指标采集
 2. 然后**明确告诉你要看屏幕的什么位置、什么现象**，再请你确认
 3. 你的回答与机器指标分开记录
+
+
+## 第十四轮：rEFInd 备用引导器
+
+社区 Arch-Linux 指南用 rEFInd 作为引导器。已下载并生成备用盘：
+
+`other/esp-refind.img`（64 MB，卷标 NUREFIND）
+
+```
+\EFI\BOOT\BOOTAA64.EFI       258,408 B   rEFInd 0.14.0.2 (aa64)
+\EFI\refind\refind.conf                  配置
+\EFI\refind\drivers_aa64\                ext4/ext2/btrfs/iso9660 驱动
+\Linux\BOOTAA64.EFI        47,831,552 B   nodrm 内核
+```
+
+配置：
+
+```
+timeout 10
+use_nvram false
+scanfor manual,external
+log_level 1
+
+menuentry "Ubuntu Linux (nuwa, self-contained)" {
+    loader \Linux\BOOTAA64.EFI
+    options "console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused"
+}
+```
+
+### 四层引导器备选（按优先级）
+
+| 层 | 引导器 | 触发条件 | 镜像 |
+|---|---|---|---|
+| 1 | **UniXNU 配置** | 读到 `\EFI\UniXNU\unixnu.toml` | `payload-bootb.img` |
+| 2 | **UniXNU 兜底** | `AddFallbackLoaders` 扫到 `\EFI\BOOT\BOOTAA64.EFI` | 同上 |
+| 3 | **UEFI Shell 手动** | Shell 里执行 `\Linux\BOOTAA64.EFI` | `esp-shell.img` |
+| 4 | **rEFInd** | Shell/rEFInd 菜单直接 loader | `esp-refind.img` |
+
+前三层都依赖 UniXNU 的卷扫描；第 4 层是独立引导器，只要 UEFI 能加载 `\EFI\BOOT\BOOTAA64.EFI` 就能起。
