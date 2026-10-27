@@ -165,3 +165,115 @@ adb shell sh /tmp/twrp-install-esp.sh --set-esp-type   # 写镜像 + 改 GPT 类
 ```
 
 脚本会：定位 vendor_boot_a 分区号/起始扇区 → dd 写入 → 尝试挂载验证 → 打印分区类型恢复命令。
+
+
+---
+
+## 10. 分层诊断：黑屏时先确定卡在哪一层
+
+**不要一上来就试遍所有镜像。** 先刷最小诊断镜像：
+
+```powershell
+.\tools\flash-uefi.ps1 -Min
+```
+
+它的 init 只做三件事：挂载 proc/sys/dev → 往 kmsg 写一行 `nuwa-min: start <uptime>` → sleep 120 后重启。
+
+| 屏幕表现 | 卡在哪一层 | 下一步 |
+|---|---|---|
+| 出现 `nuwa-min: start` | **内核 + initramfs + /init 全通** | 问题在完整 init 的某个功能 → 见 §11 |
+| 有内核日志但无 `nuwa-min` | initramfs 没解开 / `/init` 没执行 | 检查 initramfs 打包 |
+| 黑屏有背光 | 内核没起 / 显示没继承 | 见 §3 |
+| 全黑无反应 | UEFI 没加载到内核 | 见 §1 |
+
+---
+
+## 11. 内核起来了但功能不对
+
+最小镜像能打印 `nuwa-min: start` 但完整版不行时，逐个功能排查：
+
+### 11a. 输出设备
+
+完整 init 的所有输出走 `/dev/kmsg`，因此 **dmesg 和屏幕应该都能看到**。
+如果屏幕没有但 TWRP 里 `dmesg` 有 → 屏幕路径问题，不是 init 问题。
+
+### 11b. applet 自检
+
+完整 init 会打印 10 个关键 applet 的检查结果：
+
+```
+-- busybox applet 自检 --
+   OK   ip
+   OK   ifconfig
+   ...
+```
+
+如果某个是 `MISS` → busybox 缺该功能（当前实测全 OK）。
+
+### 11c. USB gadget
+
+```
+-- USB gadget (NCM) --
+   udc: a600000.dwc3          ← 正常
+   !! 没有 UDC（dwc3 未绑定）   ← 问题
+```
+
+如果是后者，init 会紧接着打印 `dwc3|udc|phy.*usb` 的 dmesg，直接看为什么控制器没绑定。
+
+---
+
+## 12. WriteBootLog：不依赖内核的事后取证
+
+uefi-nuwa 的 `ShengBootMemoryDxe` 每次启动都会在 payload 卷的**最后一块**写入：
+
+```
+NUWABOOT count=<N> dtb=0x<addr> started
+```
+
+**前提**：FAT 卷偏移 3 处的 OEM 标签必须是 `MTOO4043`（我们的 payload 已修正）。
+
+在 TWRP 里读：
+
+```
+adb push public/nuwa/tools/read-bootlog.sh /tmp/
+adb shell sh /tmp/read-bootlog.sh
+```
+
+| 现象 | 含义 |
+|---|---|
+| 有 `NUWABOOT count=N` 且 N 递增 | UEFI 走到了交接点，内核被启动过（问题在内核侧） |
+| 有该字符串但 count 恒为 1 | 内核启动后没重启（可能卡住） |
+| 没有该字符串 | UEFI 没走到 WriteBootLog（更早环节失败） |
+| 全零 | boot_b 没被识别为 payload（OEM 标签或分区大小不符） |
+
+**这是继 pstore 之后的第二个事后取证通道，且不依赖内核是否活着。**
+
+---
+
+## 13. 4 KiB FAT16 还是 512 B FAT32
+
+我们有两种 FAT 格式，选错会浪费一次刷机：
+
+| 格式 | 镜像 | 刷到 | 依据 |
+|---|---|---|---|
+| **4 KiB FAT16** | `payload-bootb*.img` | `boot_b` | UFS 的 `lba_bytes=4096`；EDK2 `MAX_BLOCK_ALIGNMENT=12` 正好允许 |
+| **512 B FAT32** | `esp-*.img` | `vendor_boot_a` | 最保险的通用格式，所有 UEFI 实现都支持 |
+
+**如果 4 KiB 版挂不上，直接换 512 B 版**——不用怀疑 FAT 格式本身，
+因为 4 KiB 已经通过 EDK2 源码的全部九项检查，只差 UFSDxe 这一环。
+
+---
+
+## 14. 屏幕文字方向不对
+
+UEFI 的 framebuffer 是横向的（3200×1440），面板是竖屏（1440×3200），
+所以 cmdline 里带了 `fbcon=rotate:1`。
+
+| 现象 | 改法 |
+|---|---|
+| 躺倒、顶部在左 | `fbcon=rotate:1`（当前） |
+| 倒置 | `fbcon=rotate:2` |
+| 躺倒、顶部在右 | `fbcon=rotate:3` |
+| 本来就是正的 | 去掉参数 |
+
+改完重新 `make Image`（30 秒）+ 重建镜像。
