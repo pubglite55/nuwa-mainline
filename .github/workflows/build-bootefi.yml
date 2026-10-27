@@ -12,8 +12,6 @@ permissions:
 
 jobs:
   bootefi:
-
-  bootefi:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     steps:
