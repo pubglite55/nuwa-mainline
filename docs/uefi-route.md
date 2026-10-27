@@ -1629,3 +1629,25 @@ strings BOOTAA64-EFIFB.EFI | grep "fbcon=rotate"
 
 这只影响 **fbcon（文本控制台）**。以后 GNOME 起来后，Wayland 的旋转由
 `/etc/xdg/monitors.xml` 或 mutter 的 transform 控制，与 fbcon 无关。
+
+
+### 附带发现并修正的一个隐藏问题
+
+检查 CI workflow 时发现**两个 job 的 cmdline 不一致**：
+
+```
+job1 (bootefi)      : console=tty0 ignore_loglevel loglevel=7
+job2 (bootefi-nodrm): console=tty0 ... keep_bootcon clk_ignore_unused pd_ignore_unused
+```
+
+**job1（正常版内核）一直缺少 `clk_ignore_unused pd_ignore_unused`**。
+这意味着之前构建的"正常版"内核没有防资源回收保护 —— 如果真机用它，
+显示资源可能在 2–3 秒后被回收导致黑屏，而 nodrm 版因为有参数所以不会。
+
+现在两个 job 的 cmdline 已统一为：
+
+```
+console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1
+```
+
+**这也说明为什么之前推荐 nodrm 版是对的**（它一直带着正确的参数）。
