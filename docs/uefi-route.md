@@ -162,3 +162,41 @@ subsystem      : 10 (EFI application)   ← UEFI LoadImage 可接受
 | USB gadget 依赖模块 | ✅ 已排除（DWC3_QCOM/F_NCM/CONFIGFS_NCM 全 `=y`） |
 | ESP 的 FAT32 结构 | ⚠️ 待真机验证（UEFI 是否挂载 vendor_boot_a） |
 | UEFI 菜单是否列出 ESP | ⚠️ 待真机验证 |
+
+
+## 第四轮验证：initramfs 内容
+
+### busybox 架构（关键）
+
+CI 日志确认：
+
+```
+ir-root/bin/busybox: ELF 64-bit LSB executable, ARM aarch64, version 1 (GNU/Linux),
+                     statically linked, BuildID[sha1]=9a56c116...
+```
+
+**注意**：本地 WSL 的 `/bin/busybox` 是 x86-64，不能用于本地验证 initramfs；
+只有 CI（`ubuntu-24.04-arm`）生成的才是正确的 aarch64 版本。
+
+### initramfs 结构
+
+```
+/
+├── init          （tools/init，busybox sh 脚本，exec >/dev/tty0）
+├── bin/busybox   （aarch64 静态）
+├── dev/ proc/ sys/ tmp/
+└── lib/modules/  （panel / fts / cs35l41 三个 .ko）
+```
+
+内核执行 `/init`，无需 `root=` 参数。
+
+### 验证清单（全部通过）
+
+| 项 | 证据 |
+|---|---|
+| 内核是 EFI 应用 | PE32+ / 0xAA64 / subsystem 10 |
+| initramfs 内嵌 | 内核 48.8 → 49.2 MB（+384 KB = 三模块） |
+| busybox 架构 | CI 日志：ARM aarch64 static |
+| cmdline | `CONFIG_CMDLINE="console=tty0 ignore_loglevel loglevel=7"` |
+| USB 内建 | `USB_DWC3_QCOM=y` / `USB_F_NCM=y` / `USB_CONFIGFS_NCM=y` |
+| ESP FAT | 卷标 NUNIXNU / NUSHELL / NUNODRM |
