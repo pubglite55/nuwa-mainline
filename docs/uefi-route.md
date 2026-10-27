@@ -437,3 +437,40 @@ console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore
 
 `clk_ignore_unused` + `pd_ignore_unused` 是**临时诊断手段**：用来确认"simpledrm 的 framebuffer
 是否因资源回收而黑掉"。确认后必须撤掉（长期保留会导致无法省电、无法休眠、无法进上游）。
+
+
+## 第七轮：经验库对 boot_b 方案的交叉验证
+
+`experience/usb-and-storage.md` 有一条警告：
+
+> ### B 槽或 recovery 分区不能用来放 Linux
+> 现象：B 槽启动进旧版本链或失败；recovery 拒绝带内核的镜像。
+> 原因：B 槽出厂可能是旧固件链或全零，super 分…
+
+**与 NUWA-PORT 的做法不冲突，但要分清两种"放"法**：
+
+| 放法 | 谁去读 | 是否可行 |
+|---|---|---|
+| 把 boot_b 当作**可启动槽**（让 ABL 启动它） | ABL | ❌ 不可行（B 槽固件链可能是旧的/全零） |
+| 把 boot_b 当作**纯数据分区**（FAT16 payload） | UEFI 的 FatDxe | ✅ 可行（NUWA-PORT 已在本机验证） |
+
+我们的做法是后者：`boot_a` 放 UEFI 固件（ABL 启动它），UEFI 再把 `boot_b` 当普通 FAT 卷挂载。
+**ABL 全程不参与 boot_b 的启动判定**，所以 B 槽固件链状态无关。
+
+### 刷写速度提醒
+
+`experience` 里另一条：
+
+> 刷写镜像把空白区域编码成"写零"，刷写极慢，Fastboot 失去响应。
+> 原因：sparse 镜像里的空白被编码为 FILL，bootloader 先回 OKAY 再在后台慢速写零。
+
+我们的 `payload-bootb.img` 是 **raw（非 sparse）**，201 MB 里大部分是零，`fastboot flash boot_b`
+会如实写入 201 MB。USB 3.0 下约 5–10 秒，USB 2.0 下可能 30 秒以上。
+若感觉卡住，改用 TWRP 里 `dd`（`tools/twrp-install-esp.sh` 已支持改分区名）。
+
+### USB 调试通道（与经验库一致）
+
+> 先做设备模式（作为调试通道，**USB2 高速 NCM 最稳**），再做主机模式和外接显示。
+> 启用顺序：控制器角色切换 → UCSI → VBUS → 枚举 → USB3/DP。
+
+我们的 initramfs 正是 NCM 路线（`configfs` + `ncm.usb0` + `192.168.0.1`），与推荐一致。
