@@ -2,7 +2,15 @@
 
 > 前提：所有产物已就绪，见 `status.md`。
 
-## 第 0 步：确认设备在线
+## 第 0 步：确认设备在线，并核对镜像
+
+刷机前可先核对镜像哈希（见 [artifact-hashes.md](artifact-hashes.md)）：
+
+```powershell
+Get-FileHash "other\payload-bootb-efifb.img" -Algorithm SHA256
+# 应为 9609bed90c7888aefaa993e9108a319bb76b0387c96a2a6644ebb9ce13d3a498
+```
+
 
 ```powershell
 & "C:\Android\platform-tools\fastboot.exe" devices
