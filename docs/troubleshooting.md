@@ -92,3 +92,29 @@ Get-NetAdapter | Where-Object { $_.InterfaceDescription -match "NCM|RNDIS" }
 刷回 `boot_a` / `init_boot_a` / `vendor_boot_a`（均已在 `backup/nuwa-backup/`，含 vendor_boot 100 MB 原厂镜像）+ `set_active a`。
 
 若改过 GPT 类型：`.\tools\device-recover.ps1 -RestoreGpt`（用 `gpt-sda-head.bin`）。
+
+
+## 7. Shell 内手动启动（绕过 UniXNU 菜单）
+
+`esp-shell.img` 里同时放了 Shell 和内核，所以即使菜单不认，也能手动启动：
+
+```
+Shell> map -r                          # 列出所有卷
+Shell> fs0:                            # 切到含 EFI 的卷（逐个试 fs1: fs2: ...）
+Shell> ls                              # 应看到 EFI\  Linux\  README.TXT
+Shell> \Linux\BOOTAA64.EFI            # 直接启动 Linux 内核
+```
+
+内核会接管屏幕，输出 `nuwa initramfs` 日志。
+
+**注意**：Shell 里启动的内核同样没有 LoadOptions，靠内置 `CONFIG_CMDLINE`（`console=tty0 ignore_loglevel loglevel=7`）。
+
+## 8. 三层启动路径（按可靠性排序）
+
+| 路径 | 机制 | 依赖 |
+|---|---|---|
+| 1. UniXNU 配置 | 读 `\EFI\UniXNU\unixnu.toml` | 卷可读 + 配置正确 |
+| 2. UniXNU 兜底 | `AddFallbackLoaders` 扫 `\EFI\BOOT\BOOTAA64.EFI` | 卷可读 |
+| 3. Shell 手动 | Shell 里执行 `\Linux\BOOTAA64.EFI` | 卷可读 + 有输入设备 |
+
+三条都不成 → 说明卷不可读（FAT 挂载问题），按 2c 处理。
