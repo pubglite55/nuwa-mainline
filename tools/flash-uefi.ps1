@@ -60,10 +60,35 @@ foreach ($f in @($uefi, $payload)) {
 Write-Host ("UEFI  : " + $uefi + "  (" + (Get-Item $uefi).Length + " B)")
 Write-Host ("payload: " + $payload + "  (" + (Get-Item $payload).Length + " B) -> " + $part)
 
-Write-Host "刷 boot_a ..."
-& $Fastboot flash boot_a $uefi 2>&1 | Select-String "OKAY|FAILED"
-Write-Host ("刷 " + $part + " ...")
-& $Fastboot flash $part $payload 2>&1 | Select-String "OKAY|FAILED"
+$failures = @()
+
+function Flash-One {
+  param([string]$Part, [string]$File)
+  Write-Host ("刷 " + $Part + " <- " + (Split-Path $File -Leaf) + " ...")
+  $out = & $Fastboot flash $Part $File 2>&1 | Out-String
+  $code = $LASTEXITCODE
+  if ($out -match "FAILED" -or $code -ne 0) {
+    Write-Host ("  FAILED (exit " + $code + ")") -ForegroundColor Red
+    Write-Host ("  " + $out.Trim()) -ForegroundColor DarkGray
+    $script:failures += $Part
+    return $false
+  }
+  Write-Host "  OK" -ForegroundColor Green
+  return $true
+}
+
+Flash-One -Part "boot_a" -File $uefi | Out-Null
+Flash-One -Part $part    -File $payload | Out-Null
+
+if ($failures.Count -gt 0) {
+  Write-Host ""
+  Write-Host ("刷写失败: " + ($failures -join ", ") + " —— 不重启，设备仍在 fastboot") -ForegroundColor Red
+  Write-Host "常见原因："
+  Write-Host "  - 分区名不对（fastboot getvar partition-type:<name>）"
+  Write-Host "  - 镜像超过分区大小"
+  Write-Host "  - USB 连接中断（重新插拔后重试）"
+  exit 1
+}
 
 Write-Host "重启 ..."
 & $Fastboot reboot 2>&1 | Out-Null
