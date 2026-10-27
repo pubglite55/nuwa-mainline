@@ -2089,3 +2089,58 @@ fbcon=rotate:1 生效 → 文字方向正确
 | `video=vfb:640x400,bpp=32` | 无 —— 虚拟 framebuffer，不需要 |
 
 **结论**：FORCE 丢弃的参数对阶段 1（自包含 initramfs + efifb）全部无关。
+
+
+## 第三十四轮：fbcon=rotate 的第二层失效原因
+
+### 发现
+
+上一轮修好了 cmdline 被覆盖的问题（`CMDLINE_FORCE`），但继续核对时发现
+**`fbcon=rotate:1` 还有第二个失效原因**：
+
+```
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+# CONFIG_FRAMEBUFFER_CONSOLE_ROTATION is not set   ← 问题
+```
+
+`drivers/video/console/Kconfig:104`：
+
+```kconfig
+config FRAMEBUFFER_CONSOLE_ROTATION
+       bool "Framebuffer Console Rotation"
+       depends on FRAMEBUFFER_CONSOLE
+       help
+	 Enable display rotation for the framebuffer console.  This is done
+	 in software and may be significantly slower than a normally oriented
+	 display.
+```
+
+**没有这个选项，`fbcon=rotate:N` 参数会被静默忽略**——不报错，只是不转。
+
+### 教训：参数配了 ≠ 功能开了
+
+这一轮暴露了一类反复出现的错误模式：
+
+| 层次 | 我们做过的 | 是否真的生效 |
+|---|---|---|
+| 写进 `CONFIG_CMDLINE` | `fbcon=rotate:1` | ❌ 被 bootloader cmdline 覆盖（第一层） |
+| 修好 cmdline 优先级 | `CMDLINE_FORCE=y` | ❌ 功能选项没开（第二层） |
+| 开启功能选项 | `FRAMEBUFFER_CONSOLE_ROTATION=y` | ✅ 这才能生效 |
+
+**每一层都"看起来配了"**，但只有三层全对才真的工作。
+
+### 建立一条检查纪律
+
+任何 cmdline 参数写进内核后，必须同时确认它的 Kconfig 依赖：
+
+| cmdline 参数 | 需要的 Kconfig | 我们是否已开 |
+|---|---|---|
+| `fbcon=rotate:N` | `FRAMEBUFFER_CONSOLE_ROTATION` | ✅ 本轮开启 |
+| `console=tty0` | `VT` + `VT_CONSOLE` + `FRAMEBUFFER_CONSOLE` | ✅ |
+| `clk_ignore_unused` | `COMMON_CLK` | ✅（核心功能） |
+| `pd_ignore_unused` | `PM_GENERIC_DOMAINS` | ✅（核心功能） |
+| `keep_bootcon` | `PRINTK` | ✅（核心功能） |
+| `ignore_loglevel` | `PRINTK` | ✅ |
+
+**验证方法**：`grep` 内核源码里该参数的处理函数，看它是否被 `#ifdef CONFIG_XXX` 包住。
