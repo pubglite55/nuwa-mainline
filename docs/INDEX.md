@@ -34,6 +34,7 @@
 | `esp-refind.img` | 64 MB | rEFInd 0.14.0.2 (aa64) + nodrm 内核 | `vendor_boot_a` |
 | **`esp-efifb.img`** | 64 MB | 512 B FAT32，**本地 efifb 版**（44.2 MB） | `vendor_boot_a` |
 | **`payload-bootb-efifb.img`** | 192 MiB | **4 KiB FAT16**，本地 efifb 版 | `boot_b` |
+| `vendor_boot-initrd-esp.img` | 67.7 MiB | FAT 放进 vendor ramdisk（该路径在 nuwa 上被固件禁用） | `vendor_boot_a` |
 
 ### 内核源码/产物
 
@@ -95,6 +96,21 @@ make -j20 Image        # 增量构建，实测 14 分钟（3155 个 .o 重编译
 
 **关键**：必须设 `CROSS_COMPILE`，否则用宿主 gcc 会报
 `unrecognized command-line option '-mlittle-endian'`。
+
+## 关键结论：音频/传感器为什么不可用
+
+`nuwaPkg/Include/DXE.inc` 里 PIL 被注释掉：
+
+```
+// INF Binaries/nuwa/QcomPkg/Drivers/PILDxe/PILDxe.inf
+//     # probe: PIL needs a matching uefipil.cfg entry and panics otherwise
+```
+
+PIL 负责加载 ADSP / CDSP / modem / GPU / 相机固件。它被禁用 ⇒
+官方状态表里 Speakers ❌、Microphone ❌、Mobile Data ❌、GPU ❌、传感器全 ❌
+**全部由此解释**。这不是驱动问题，是 UEFI 固件没给这些子系统上电。
+
+要启用需要 `uefilpil.cfg`（仓库里没有，需从原厂提取），属独立深水区任务。
 
 ## 当前唯一阻塞
 
