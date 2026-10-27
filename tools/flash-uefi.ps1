@@ -1,14 +1,18 @@
 <#
-  nuwa 启动：两条路径
-    A) ESP 在 vendor_boot_a（512B 扇区 FAT32，64MB）—— 可能不被 FatDxe 挂载
-    B) payload 在 boot_b（4KiB 扇区 FAT16，192MB）—— 与 NUWA-PORT.md 验证过的格式一致 ★推荐
-
+  nuwa 刷写（统一入口）
   用法:
-    .\tools\flash-uefi.ps1            # 路径 A
-    .\tools\flash-uefi.ps1 -BootB     # 路径 B（推荐）
+    .\tools\flash-uefi.ps1                 # 默认：UEFI + esp-nuwa.img -> vendor_boot_a
+    .\tools\flash-uefi.ps1 -BootB          # UEFI + payload-bootb.img -> boot_b（推荐，4KiB FAT16）
+    .\tools\flash-uefi.ps1 -Mode shell     # UEFI + esp-shell.img -> vendor_boot_a（Shell 诊断）
+    .\tools\flash-uefi.ps1 -Mode vendor -Nodrm   # UEFI + esp-nuwa-nodrm.img -> vendor_boot_a
+    .\tools\flash-uefi.ps1 -Debug          # 刷 UEFI DEBUG 版到 boot_a
 #>
 param(
   [switch]$BootB,
+  [ValidateSet("vendor","shell")] [string]$Mode = "vendor",
+  [switch]$Nodrm,
+  [switch]$Debug,
+  [int]$WatchSeconds = 90,
   [string]$Other = "C:\Users\L1872\Documents\nuwa ubt\other",
   [string]$Fastboot = "C:\Android\platform-tools\fastboot.exe",
   [string]$Adb = "C:\Android\platform-tools\adb.exe"
@@ -21,33 +25,43 @@ if ($fb -notmatch "fastboot") {
   exit 1
 }
 
-$uefi = Join-Path $Other "uefi-nuwa\Mu-nuwa.img"
-if (-not (Test-Path $uefi)) { Write-Host "缺少 $uefi"; exit 1 }
+# 选 UEFI 镜像
+$uefi = if ($Debug) { Join-Path $Other "uefi-nuwa-debug\Mu-nuwa.img" } else { Join-Path $Other "uefi-nuwa\Mu-nuwa.img" }
 
-Write-Host "刷 UEFI 固件 -> boot_a ..."
-& $Fastboot flash boot_a $uefi 2>&1 | Select-String "OKAY|FAILED"
-
+# 选 payload
 if ($BootB) {
-  $payload = Join-Path $Other "payload-bootb.img"
-  if (-not (Test-Path $payload)) { Write-Host "缺少 $payload"; exit 1 }
-  Write-Host "刷 payload(4KiB FAT16) -> boot_b ..."
-  & $Fastboot flash boot_b $payload 2>&1 | Select-String "OKAY|FAILED"
+  $payload = Join-Path $Other "payload-bootb.img"; $part = "boot_b"
+} elseif ($Mode -eq "shell") {
+  $payload = Join-Path $Other "esp-shell.img"; $part = "vendor_boot_a"
+} elseif ($Nodrm) {
+  $payload = Join-Path $Other "esp-nuwa-nodrm.img"; $part = "vendor_boot_a"
 } else {
-  $esp = Join-Path $Other "esp-nuwa.img"
-  if (-not (Test-Path $esp)) { Write-Host "缺少 $esp"; exit 1 }
-  Write-Host "刷 ESP(512B FAT32) -> vendor_boot_a ..."
-  & $Fastboot flash vendor_boot_a $esp 2>&1 | Select-String "OKAY|FAILED"
+  $payload = Join-Path $Other "esp-nuwa.img"; $part = "vendor_boot_a"
 }
+
+foreach ($f in @($uefi, $payload)) {
+  if (-not (Test-Path $f)) { Write-Host ("缺少 " + $f); exit 1 }
+}
+Write-Host ("UEFI  : " + $uefi + "  (" + (Get-Item $uefi).Length + " B)")
+Write-Host ("payload: " + $payload + "  (" + (Get-Item $payload).Length + " B) -> " + $part)
+
+Write-Host "刷 boot_a ..."
+& $Fastboot flash boot_a $uefi 2>&1 | Select-String "OKAY|FAILED"
+Write-Host ("刷 " + $part + " ...")
+& $Fastboot flash $part $payload 2>&1 | Select-String "OKAY|FAILED"
 
 Write-Host "重启 ..."
 & $Fastboot reboot 2>&1 | Out-Null
 
-Write-Host ""
-Write-Host "观察 90 秒 USB 枚举..."
-for ($i = 0; $i -lt 45; $i++) {
-  $usb = (Get-PnpDevice -PresentOnly 2>$null | Where-Object { $_.InstanceId -match "VID_18D1|VID_2717" } | Measure-Object).Count
-  if ($usb -gt 0) { Write-Host ("  t=" + ($i * 2) + "s  USB ($usb)") }
+# 先静默等待，避免撞上 ABL 拆 USB 窗口（经验库提醒）
+Start-Sleep -Seconds 5
+Write-Host ("观察 " + $WatchSeconds + " 秒 USB 枚举 ...")
+$last = ""
+for ($i = 0; $i -lt $WatchSeconds; $i += 2) {
+  $usb = Get-PnpDevice -PresentOnly 2>$null | Where-Object { $_.InstanceId -match "VID_18D1|VID_2717" }
+  $state = if ($usb) { "present(" + ($usb | Measure-Object).Count + ")" } else { "absent" }
+  if ($state -ne $last) { Write-Host ("  t=" + $i + "s  " + $state); $last = $state }
   Start-Sleep -Seconds 2
 }
 Write-Host ""
-Write-Host "看屏幕：UniXNU 菜单应出现 'EFI loader on volume N' 或 Ubuntu 条目"
+Write-Host "请看屏幕：UniXNU 菜单是否出现 'Ubuntu Linux (self-contained)' 或 'EFI loader on volume N'"
