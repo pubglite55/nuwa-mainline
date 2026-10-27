@@ -1049,3 +1049,52 @@ QEMU 实测结果：
 
 `POWER_RESET_QCOM_PON=y` 覆盖 pwrkey/resin，但音量加走 `gpio-keys`，需要
 `INPUT_GPIO_KEYS=y` + `KEYBOARD_GPIO=y`。
+
+
+## 第二十轮：nuwa 的 UEFI 内存映射（关键参考）
+
+来自 `uefi-nuwa/Platforms/Xiaomi/nuwaPkg/Library/MemoryMapLib/MemoryMapLib.c`：
+
+```
+UEFI FD            0xA7100000  +0x00300000 (3 MB)
+UEFI FD Reserved   0xA7400000  +0x00200000
+Info Blk           0xA7601000  +0x00001000
+MMU PageTables     0xA7602000  +0x00003000
+Log Buffer         0xA7605000  +0x00008000
+UEFI Stack         0xA760D000  +0x00040000
+SEC Heap           0xA764D000  +0x0008C000
+Sched Heap         0xA76D9000  +0x00400000
+FV Region          0xA7AD9000  +0x00400000
+Kernel             0xA8000000  +0x10000000 (256 MB)   ← 内核保留区
+Display Reserved   0xB8000000  +0x02B00000 (43 MB)
+DXE Heap           0xBAE00000  +0x0D000000 (208 MB)
+```
+
+### 与 NUWA-PORT.md 的对应
+
+> `/chosen` `linux,initrd-start` points into the kernel reservation (0xA8000000 + 256 MB)
+
+即内核与 initrd 都在 `0xA8000000` 起的 256 MB 窗口内。
+
+### 一个需要留意的属性
+
+`Kernel` 区的 ArmAttribute 是 **`WRITE_BACK_XN`**（XN = execute-never，不可执行）。
+
+- 如果内核被直接加载到该区并原地执行 → 会被 MMU 拒绝
+- 实际路径是 `LoadImage` → UEFI 把 PE 映像复制到 `EfiLoaderCode`（可执行）→ 再 `StartImage`
+- 所以正常不受影响；但若出现"加载成功却立刻挂死"，这里是可疑点之一
+
+### 我们的内核尺寸对照
+
+| 项 | 值 |
+|---|---|
+| 内核 | 44.25 MB |
+| Kernel 保留区 | 256 MB |
+| 余量 | 充足 ✓ |
+
+### 完整内存映射的意义
+
+这份表解释了为什么 UEFI 路径下硬件起点与 ABL 不同（经验库第 4 条警告）：
+显示保留区在 `0xB8000000`（43 MB），DXE 堆在 `0xBAE00000`（208 MB）——
+这些区域在 UEFI 退出后仍被占用，内核的 `/reserved-memory` 必须与之一致，
+否则会出现"内核把固件还在用的内存当空闲内存分配"的灾难。
