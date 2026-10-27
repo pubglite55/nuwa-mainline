@@ -869,3 +869,37 @@ logical_block_size > physical_block_size not supported                ← 两者
 
 **4 KiB FAT16 是否能被 UFSDxe + FatDxe 挂载，只能真机验证**。QEMU 这条路已排除，
 不再重复尝试。
+
+
+### 补充：EFI stub 路径也无法用 QEMU 验证
+
+```bash
+qemu-system-aarch64 -M virt -cpu max -m 2G \
+  -drive if=pflash,format=raw,readonly=on,file=AAVMF_CODE.fd \
+  -drive if=pflash,format=raw,file=vars.fd \
+  -kernel Image -append "console=ttyAMA0 ..." -nographic
+```
+
+结果：只有 `UEFI firmware (version 2025.11-3ubuntu7.3)` 一行，60 秒无后续输出。
+
+⇒ AAVMF 的 BDS 在 `-nographic` 下既不从 virtio 磁盘启动 `\EFI\BOOT\BOOTAA64.EFI`，
+也不启动 `-kernel` 指定的镜像。
+
+### QEMU 能验证什么 / 不能验证什么（总结）
+
+| 能验证 | 方法 | 结果 |
+|---|---|---|
+| 内核可启动 | `-kernel Image`（不经 UEFI） | ✅ 通过 |
+| initramfs 内嵌 + `/init` 执行 | 同上，看 `Run /init as init process` | ✅ 通过 |
+| 防回收参数生效 | 对比 `Disabling` vs `Not disabling unused clocks` | ✅ 通过 |
+| init 输出兜底 | 看 `nuwa-init: output bound` | ✅ 通过 |
+| 驱动是否内建 | 看 probe 日志（如 `SPI driver fts`） | ✅ 通过 |
+
+| 不能验证 | 原因 |
+|---|---|
+| ESP/卷能否被挂载 | AAVMF BDS 不启动我们的 ESP（512B 正对照同样失败） |
+| 4 KiB FAT16 兼容性 | 同上，且 virtio 与真机 UFS 驱动不同 |
+| EFI stub 加载路径 | AAVMF 不启动 `-kernel` 镜像 |
+| 任何 SM8550 硬件行为 | QEMU `-M virt` 无对应硬件 |
+
+**结论**：QEMU 已发挥完它的价值（证明内核与 initramfs 可用），剩余全部必须真机。
