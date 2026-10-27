@@ -279,3 +279,45 @@ FAT type     : FAT16/12  （48,128 簇 < 65,525）
 即：`boot_a` ← UEFI 固件，`boot_b` ← 4 KiB FAT16 payload。
 
 这条路径的每一环都有社区在**同一台设备**上的验证记录，比我们之前 512 B FAT32 的尝试更有依据。
+
+
+### 补充：社区 payload 制作的两种实现
+
+`build-sheng-payload.py`（sheng，macOS 上跑）：
+
+```python
+FAT_SIZE = os.environ.get('SHENG_FAT_SIZE', '192m')   # 176m 可适配 boot 分区
+subprocess.run(['hdiutil', 'create', '-size', FAT_SIZE, '-layout', 'NONE',
+                '-fs', 'MS-DOS FAT32', '-volname', 'SHENGESP', '-ov', str(image)])
+```
+
+`NUWA-PORT.md`（nuwa 版）改用 mtools：
+
+```
+payload.py formats with mformat -M 4096 -T size_mib*256 and no -F
+```
+
+我们采用后者（Linux/WSL 可复现）：
+
+```bash
+dd if=/dev/zero of=payload.img bs=1M count=192
+mformat -i payload.img -M 4096 -T $((192*256)) -v NUWAESP ::
+```
+
+**为什么 4 KiB 扇区是对的**：UFS 的 `lba_bytes = 4096`，BlockIo 以 4 KiB 为单位；
+FAT BPB 的 `bytes/sector` 必须与之匹配，否则 FatDxe 解析偏移全错。
+EDK2 FatPkg 支持 512/1024/2048/4096 四种扇区大小。
+
+### 配置路径写法
+
+社区用**相对路径**（相对 `\EFI\UniXNU\`）：
+
+```toml
+[[entry]]
+type = "xnu"
+path = "Payloads/kernel.macho"
+```
+
+我们用的是绝对路径 `path = "\\EFI\\BOOT\\BOOTAA64.EFI"`，经 `UniXNUNormalizePath` 的
+`Absolute = (Path[0] == '\\')` 判定也是合法的。若真机上配置不被识别，可改为
+`path = "Payloads/BOOTAA64.EFI"`（把内核放 `\EFI\UniXNU\Payloads\`）以完全对齐社区写法。
