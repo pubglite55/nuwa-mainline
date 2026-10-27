@@ -156,3 +156,64 @@ apt install -y ubuntu-desktop-minimal network-manager
 解压后直接有 GNOME。代价是镜像大、含大量无关驱动。
 
 **当前决策**：先用 base + chroot（可控、小），如果 chroot 装包遇到问题再换桌面镜像。
+
+
+### apt 源已验证可用（阶段 2 可行性确认）
+
+rootfs 里的 `/etc/apt/sources.list.d/ubuntu.sources`（deb822 格式）：
+
+```
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: resolute resolute-updates resolute-backports
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu/
+Suites: resolute-security
+Components: main universe restricted multiverse
+```
+
+实测（通过代理）：
+
+| 索引 | 状态 | arm64 |
+|---|---|---|
+| `resolute/Release` | 200 | ✅ 在 Architectures 列表里 |
+| `resolute-updates/Release` | 200 | ✅ |
+| `resolute-security/Release` | 200 | ✅ |
+| `main/binary-arm64/Packages.gz` | 200（1.86 MB） | ✅ |
+
+⇒ **chroot 里 `apt update && apt install` 会正常工作**，arm64 包齐全。
+
+**注意**：设备上需要能联网（Wi-Fi 或 USB 网络）。如果阶段 1 的 USB NCM 通了，
+可以通过 PC 侧共享网络；否则需要先解决 Wi-Fi。
+
+### 备选：官方预装桌面镜像（已确认存在，未下载）
+
+```
+https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04-preinstalled-desktop-arm64+raspi.img.xz
+```
+
+| 项 | 值 |
+|---|---|
+| 大小 | 3,062,043,804 B（2.85 GiB） |
+| 状态 | 已确认 HTTP 200 存在 |
+| 优点 | 解压即有 GNOME，省掉 chroot 装几百个包 |
+| 缺点 | 2.85 GiB，含大量树莓派专用组件需清理 |
+
+**当前决策**：仍用 base + chroot（33.5 MiB，可控）。如果 chroot 装包遇到网络问题，
+再考虑下载这个镜像。
+
+### 阶段 2 的完整检查清单
+
+| 项 | 状态 |
+|---|---|
+| rootfs 下载 | ✅ 33.5 MiB |
+| rootfs 完整性 | ✅ 解压 0 错误，6564 文件 |
+| 确认缺 systemd | ✅ 已记录，有两条补装路线 |
+| apt 源可用 | ✅ 三个 suite 全 200 |
+| arm64 包索引 | ✅ 1.86 MB |
+| 安装脚本 | ✅ `install-rootfs.sh` 语法通过 |
+| 备选镜像 | ✅ URL 已确认（2.85 GiB） |
+| **实际安装** | ⏳ 需要设备 |
