@@ -76,3 +76,35 @@ rEFInd 配置示例（社区）：
 > Deleting userdata will wipe all your data in Android!
 
 缩小 userdata 前必须备份。我们的 `backup/nuwa-backup/` 已含关键分区，但 **userdata 内的用户数据不在其中**。
+
+
+## 阶段 2 的根文件系统已就位
+
+`other/ubuntu-base-26.04-arm64.tar.gz`
+
+| 项 | 值 |
+|---|---|
+| 大小 | 35,094,845 B（33.5 MiB） |
+| SHA256 | `b2b46a37324ea1954e93f293fe6d7c2241daf2fc298c4022e6e4caceeed74cab` |
+| 文件数 | 6,564 |
+| 架构验证 | `usr/lib/aarch64-linux-gnu/`、`usr/bin/bash` 均在 |
+| 来源 | `https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/` |
+
+### 为什么用 base 而不是预装 GNOME 的镜像
+
+| 方案 | 优点 | 缺点 |
+|---|---|---|
+| **ubuntu-base（已下载）** | 小（33 MiB）、干净、可控 | 需要 chroot 装 GNOME（几百个包） |
+| 官方桌面镜像 | GNOME 已装 | 2–4 GiB，含大量无关驱动 |
+
+base + chroot 安装的好处：可以精确控制装哪些包，避免把 x86 桌面镜像里的无用组件带进来。
+
+### 安装步骤（阶段 2，需要设备在线）
+
+1. 在 Linux 上把 rootfs 解压到 ext4 分区
+2. chroot 进去装 `ubuntu-desktop-minimal`、`network-manager`、`gnome-shell`
+3. 按 `references/ubuntu.md` 的分层结构做包拆分
+4. 内核 cmdline 改成 `root=PARTLABEL=nuwa-root rootwait`
+
+**注意**：这一步需要 UFS 驱动工作（`SCSI_UFS_QCOM=y` 已内建）。
+如果阶段 1 发现 UFSDxe 有问题，阶段 2 也要相应调整。
