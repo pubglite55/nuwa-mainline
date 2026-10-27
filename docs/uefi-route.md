@@ -360,3 +360,49 @@ path = "Payloads/kernel.macho"
 
 > 若某次刷写后设备刷完直接回 fastboot（UEFI 不执行），优先检查 vbmeta_a 是否被覆盖成 flags≠0x3。
 > 恢复：`fastboot flash vbmeta_a backup/nuwa-backup/vbmeta_a.img`。
+
+
+## ★ 第六轮：经验库命中的关键盲区（整链内建）
+
+加载 `android-mainline-port` 技能后，`experience/kernel-and-resources.md` 里这条直接命中我们：
+
+> ### 驱动编成 `=m`，但镜像里没有模块目录，功能静默缺失【高频】【耗时】
+> 现象：永久 `EPROBE_DEFER`、驱动不绑定、电源键和音量键失效、远端处理器服务不出现，
+> 但**没有任何报错**。
+> 常见受害者（高通）：`QCOM_GPI_DMA`（SPI 触控）、`SPI_QCOM_GENI`、
+> `QRTR`/`QRTR_SMD`/`QCOM_PD_MAPPER`（ADSP 服务）、`PHY_QCOM_QMP_PCIE`+`RFKILL`（Wi-Fi）、
+> `POWER_RESET_QCOM_PON`（电源键和音量键）、`RTC_DRV_PM8XXX`、`NVMEM_REBOOT_MODE`、
+> `BATTERY_QCOM_BATTMGR`、`QCOM_CPUCP_MBOX`、`SPI_QCOM_GENI`、`FASTRPC`、`SND_SEQUENCER`。
+> 怎么解决：**首启阶段把启动和恢复依赖全部 `=y`**。
+
+我们此前只内建了 USB 三个配置，initramfs 里也只有 panel/fts/cs35l41 三个模块 ——
+**触控的 SPI 控制器、电源键、Wi-Fi PHY、ADSP 服务全都会静默缺失**。
+
+### 已补齐的内建清单（两个 job 同步修改）
+
+```
+QCOM_GPI_DMA / SPI_QCOM_GENI / SPI_QCOM_QSPI     ← 触控 SPI 链路
+POWER_RESET_QCOM_PON                              ← 电源键、音量键
+QCOM_PD_MAPPER / QRTR / QRTR_SMD                  ← ADSP 服务
+PHY_QCOM_QMP_PCIE / RFKILL                        ← Wi-Fi 链路
+CLK_QCOM_DISPCC_SM8550 / QCOM_CLK_RPMH            ← 显示时钟（模块会导致"慢启动态"）
+PINCTRL_SM8550 / PINCTRL_SM8550_LPASS_LPI
+RTC_DRV_PM8XXX / NVMEM_REBOOT_MODE / NVMEM_SPMI_SDAM
+BATTERY_QCOM_BATTMGR / QCOM_CPUCP_MBOX
+QCOM_SMEM / QCOM_SMD_RPM / QCOM_RPMH / ARM_SMMU / QCOM_LLCC / SCSI_UFS_QCOM
+OVERLAY_FS
+```
+
+### 另一条相关警告：借用固件画面的资源回收
+
+> ### 固件仍在用的资源没有消费者，被内核回收【高频】【耗时】
+> 现象：借用固件画面一段时间后黑屏或灰屏；触控 SPI 超时；多数情况重启也不恢复。
+> 原因：内核在 `late_initcall`（`clk_disable_unused`）和 sync_state 时关掉没有消费者的资源。
+> 怎么解决：在真正的消费者节点（例如 `simple-framebuffer`）里声明电源域、时钟、互连路径及带宽。
+
+**这条对 nodrm 版（simpledrm 借用 UEFI framebuffer）是直接风险**：如果设备树里
+`simple-framebuffer` 节点没有声明 `power-domains`/`clocks`/`interconnects`，
+显示时钟可能在 2–3 秒后被回收，画面随即黑掉。
+
+诊断手段（临时，不可长期保留）：`clk_ignore_unused`、`pd_ignore_unused` ——
+用来确认"是不是资源回收"后再撤掉。
