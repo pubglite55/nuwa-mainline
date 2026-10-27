@@ -1651,3 +1651,59 @@ console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore
 ```
 
 **这也说明为什么之前推荐 nodrm 版是对的**（它一直带着正确的参数）。
+
+
+## 第二十九轮：PIL 的启用条件已查明
+
+### 其他设备确实启用 PIL
+
+扫描 `uefi-nuwa` 里全部 86 个 `DXE.inc`：
+
+| 设备 | PILDxe / PILProxyDxe |
+|---|---|
+| Asus i005d | ✅ 启用（PILProxyDxe） |
+| LG mh2 | ✅ 启用（PILDxe） |
+| Lenovo 9707f | ✅ 启用（PILDxe） |
+| Lenovo j706f | ✅ 启用（PILDxe） |
+| Motorola caprip | ❌ 注释掉 |
+| **Xiaomi nuwa** | ❌ 注释掉 |
+
+⇒ **PIL 本身是可用的**，nuwa 只是被注释掉了。
+
+### nuwa 被注释的原因
+
+```
+// INF Binaries/nuwa/QcomPkg/Drivers/PILDxe/PILDxe.inf   # probe: PIL needs a matching
+//     uefipil.cfg entry and panics otherwise; not needed for the menu
+```
+
+**关键在 "needs a matching uefipil.cfg entry"**。
+
+### uefipil.cfg 不在仓库里
+
+搜索 `uefi-nuwa` 全部文件：没有 `uefipil.cfg`，也没有其他 `.cfg`。
+
+⇒ 它要么在 `Binaries/nuwa/` 的预编译资源里（不在 git 里），
+要么需要**从原厂固件分区提取**。
+
+### 这对音频意味着什么
+
+要启用 PIL 需要两步：
+
+1. 取消 `DXE.inc` 里 PILDxe 的注释
+2. 提供匹配的 `uefipil.cfg`（描述 ADSP/CDSP/modem 等固件的位置与名称）
+
+**第 2 步是真正的障碍**：需要从原厂设备提取配置，而 nuwa 的固件布局只有高通/小米知道。
+猜错会 panic（注释里明说 "panics otherwise"）。
+
+### 结论：音频不在 v1 范围内
+
+| 项 | 状态 |
+|---|---|
+| PIL 驱动本身 | ✅ 社区其他设备可用 |
+| nuwa 的 PIL 配置 | ❌ 缺失，需从原厂提取 |
+| 风险 | 配置错误会 panic（不是静默失败） |
+| 工作量 | 未知，可能需要反解原厂 UEFI |
+
+**建议**：v1 先把启动 + 显示 + 触控 + USB 网络做通。音频作为 v2 的独立子任务，
+前提是先从原厂提取到 `uefipil.cfg`。
