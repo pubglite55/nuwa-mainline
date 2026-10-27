@@ -127,3 +127,38 @@ CI 流程改为：`make Image modules` → 收集 `.ko` 到 `ir-root/lib/modules
 ### 4. 备选：显示安全版
 
 若 `DRM_MSM=y` 抢占 framebuffer 导致屏幕无输出，可构建 `--disable DRM_MSM` 版本，让 `simpledrm` 直接用 UEFI GOP 输出内核日志。
+
+
+## 离线验证成果（第三轮）
+
+### EFI 应用格式验证（QEMU/PE 头）
+
+`BOOTAA64.EFI` 解析结果：
+
+```
+DOS magic      : MZ
+PE offset      : 0x40, signature PE\0\0
+machine        : 0xAA64 (AArch64)
+optional magic : 0x20B (PE32+)
+subsystem      : 10 (EFI application)   ← UEFI LoadImage 可接受
+```
+
+结论：内核是**合法的 AArch64 EFI 应用**，UEFI 的 `LoadImage`+`StartImage` 必定能加载。
+
+### QEMU + AAVMF 实测
+
+`qemu-system-aarch64 -M virt -cpu max -m 2G` + `AAVMF_CODE.fd` + ESP 作为 virtio 磁盘：
+固件正常启动（`UEFI firmware version 2025.11-3ubuntu7.3`），但 AAVMF 未自动启动 `\EFI\BOOT\BOOTAA64.EFI`（其启动顺序/超时策略所致），45 秒内无 EFI stub 输出。
+
+真机路径不受影响：nuwa 的 UEFI 里 UniXNU 的 `AddFallbackLoaders` 会主动扫描并列出该文件。
+
+### 已消除的风险
+
+| 风险 | 状态 |
+|---|---|
+| 内核不是有效 EFI 应用 | ✅ 已排除（PE32+ / subsystem 10） |
+| initramfs 未内嵌 | ✅ 已排除（内核 +384 KB，与模块总和吻合） |
+| cmdline 缺失 | ✅ 已排除（`CONFIG_CMDLINE` 写入并 `CMDLINE_EXTEND`） |
+| USB gadget 依赖模块 | ✅ 已排除（DWC3_QCOM/F_NCM/CONFIGFS_NCM 全 `=y`） |
+| ESP 的 FAT32 结构 | ⚠️ 待真机验证（UEFI 是否挂载 vendor_boot_a） |
+| UEFI 菜单是否列出 ESP | ⚠️ 待真机验证 |
