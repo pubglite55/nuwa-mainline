@@ -1,18 +1,55 @@
 <#
   完整恢复：把设备刷回原厂 Android（三件套 + slot a）
-  用法: .\tools\device-recover.ps1
-  前提: 设备在 fastboot（长按电源 15 秒 → 音量下 + 电源）
+  用法: .\tools\device-recover.ps1 [-RestoreGpt] [-IncludeBootB]
 
-  备份来源（全部在 backup/nuwa-backup/）：
-    boot_a.img / init_boot_a.img / vendor_boot_a.img
-    gpt-sda-head.bin / gpt-sda-backup.bin（若改过分区表）
+  设计依据（经验库 patterns.md 模式 I「恢复路径本身不可靠」）：
+    - 每一步都检查退出码，失败立即停止并报告
+    - GPT 写入是危险操作，需要二次确认
+    - 最后必须验证设备真的起来了，而不是只发 reboot 就宣布成功
 #>
 param(
   [string]$BackupDir = "C:\Users\L1872\Documents\nuwa ubt\backup\nuwa-backup",
   [string]$Adb = "C:\Android\platform-tools\adb.exe",
   [string]$Fastboot = "C:\Android\platform-tools\fastboot.exe",
-  [switch]$RestoreGpt
+  [switch]$RestoreGpt,
+  [switch]$IncludeBootB,
+  [int]$WaitSeconds = 90
 )
+
+$ErrorActionPreference = "Continue"
+$NL = [Environment]::NewLine
+$failed = @()
+
+function Invoke-Flash {
+  param([string]$Part, [string]$File, [switch]$Dangerous)
+  $path = Join-Path $BackupDir $File
+  if (-not (Test-Path $path)) {
+    Write-Host ("  跳过 " + $Part + "：缺少 " + $File) -ForegroundColor Yellow
+    $script:failed += ($Part + " (缺文件)")
+    return $false
+  }
+  if ($Dangerous) {
+    Write-Host ""
+    Write-Host ("  !! 即将写入 " + $Part + " <- " + $File + "（危险操作）") -ForegroundColor Red
+    Write-Host "     5 秒后开始，Ctrl+C 取消 ..."
+    Start-Sleep -Seconds 5
+  }
+  Write-Host ("  刷 " + $Part + " <- " + $File + " ...")
+  $out = & $Fastboot flash $Part $path 2>&1 | Out-String
+  $code = $LASTEXITCODE
+  if ($out -match "FAILED") {
+    Write-Host ("  FAILED: " + $out.Trim()) -ForegroundColor Red
+    $script:failed += ($Part + " (flash FAILED)")
+    return $false
+  }
+  if ($code -ne 0) {
+    Write-Host ("  FAILED: 退出码 " + $code) -ForegroundColor Red
+    $script:failed += ($Part + " (exit " + $code + ")")
+    return $false
+  }
+  Write-Host "  OK" -ForegroundColor Green
+  return $true
+}
 
 $fb = & $Fastboot devices 2>&1 | Out-String
 if ($fb -notmatch "fastboot") {
@@ -23,30 +60,79 @@ if ($fb -notmatch "fastboot") {
   exit 1
 }
 
-Write-Host "=== 恢复原厂 Android ==="
+Write-Host "=============================================="
+Write-Host " 恢复原厂 Android"
+Write-Host "=============================================="
+Write-Host ""
 
 if ($RestoreGpt) {
-  Write-Host "恢复 GPT 主表 -> sda ..."
-  & $Fastboot flash sda (Join-Path $BackupDir "gpt-sda-head.bin") 2>&1 | Select-String "OKAY|FAILED"
+  Write-Host "--- 恢复 GPT（危险）---" -ForegroundColor Red
+  Invoke-Flash -Part "sda" -File "gpt-sda-head.bin" -Dangerous | Out-Null
+  Write-Host ""
 }
 
-foreach ($item in @(
-  @{ Part = "boot_a";        File = "boot_a.img" },
-  @{ Part = "init_boot_a";   File = "init_boot_a.img" },
-  @{ Part = "vendor_boot_a"; File = "vendor_boot_a.img" }
-)) {
-  $path = Join-Path $BackupDir $item.File
-  if (-not (Test-Path $path)) { Write-Host "缺少 $path"; continue }
-  Write-Host ("刷 " + $item.Part + " ...")
-  & $Fastboot flash $item.Part $path 2>&1 | Select-String "OKAY|FAILED"
+Write-Host "--- 刷启动分区 ---"
+Invoke-Flash -Part "boot_a"        -File "boot_a.img"        | Out-Null
+Invoke-Flash -Part "init_boot_a"   -File "init_boot_a.img"   | Out-Null
+Invoke-Flash -Part "vendor_boot_a" -File "vendor_boot_a.img" | Out-Null
+if ($IncludeBootB) {
+  Write-Host ""
+  Write-Host "--- 同时恢复 B 槽 ---"
+  Invoke-Flash -Part "boot_b" -File "boot_b.img" | Out-Null
+}
+Write-Host ""
+
+Write-Host "--- 设置活动槽 a ---"
+$out = & $Fastboot set_active a 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ("  警告：set_active 返回 " + $LASTEXITCODE + "（继续）") -ForegroundColor Yellow
+} else {
+  Write-Host "  OK" -ForegroundColor Green
+}
+Write-Host ""
+
+if ($failed.Count -gt 0) {
+  Write-Host "=============================================="
+  Write-Host " 有步骤失败，不重启（避免带病启动）" -ForegroundColor Red
+  Write-Host "=============================================="
+  $failed | ForEach-Object { Write-Host ("  - " + $_) }
+  Write-Host ""
+  Write-Host "设备仍在 fastboot，可以安全修正后重跑。"
+  exit 1
 }
 
-Write-Host "设置活动槽 a ..."
-& $Fastboot set_active a 2>&1 | Out-String | Write-Host
-
-Write-Host "重启 ..."
+Write-Host "--- 重启并验证 ---"
 & $Fastboot reboot 2>&1 | Out-Null
+Write-Host ("  等待 " + $WaitSeconds + " 秒观察是否进入 Android ...")
 
-Start-Sleep -Seconds 45
-Write-Host "=== 45 秒后设备状态 ==="
-& $Adb devices -l
+$started = $false
+for ($i = 0; $i -lt $WaitSeconds; $i += 3) {
+  $adbOut = & $Adb devices 2>&1 | Out-String
+  if ($adbOut -match "device") {
+    Write-Host ("  t=" + $i + "s  adb 已连接") -ForegroundColor Green
+    $started = $true
+    break
+  }
+  if (($i % 15) -eq 0 -and $i -gt 0) { Write-Host ("  t=" + $i + "s  ...") }
+  Start-Sleep -Seconds 3
+}
+
+Write-Host ""
+if ($started) {
+  Write-Host "=============================================="
+  Write-Host " 恢复成功：设备已进入 Android" -ForegroundColor Green
+  Write-Host "=============================================="
+  & $Adb devices -l
+} else {
+  Write-Host "=============================================="
+  Write-Host (" 分区已刷回，但 " + $WaitSeconds + " 秒内未见 adb") -ForegroundColor Yellow
+  Write-Host "=============================================="
+  Write-Host "可能原因："
+  Write-Host "  1. 首次启动较慢（再等 60 秒，或看屏幕）"
+  Write-Host "  2. userdata 损坏（改过分区时会发生）→ recovery 里 format data"
+  Write-Host "  3. vbmeta 不匹配 → fastboot flash vbmeta_a vbmeta_a.img 后重试"
+  Write-Host ""
+  & $Adb devices -l
+  & $Fastboot devices
+  exit 2
+}
