@@ -1582,3 +1582,50 @@ reboot -f
 | 全黑无反应 | UEFI 根本没加载到内核 |
 
 **这是把"黑屏"这个模糊现象拆成四层的第一把手术刀。**
+
+
+## 第二十八轮：屏幕旋转（NUWA-PORT 的 Known gaps 命中）
+
+`NUWA-PORT.md` 的 Known gaps 里有一条直接影响我们的 Linux：
+
+> The framebuffer is **rotated 90 degrees** (legacy display orientation / unit scale).
+
+nuwa 的面板是 1440x3200 竖屏，但 UEFI 的 DisplayDxe 提供的 framebuffer 是横向的
+（3200x1440）。如果内核直接用它，屏幕上的文字会是躺倒的。
+
+### 修正
+
+cmdline 增加 `fbcon=rotate:1`：
+
+```
+console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1
+```
+
+`fbcon` 的 rotate 取值：0=正常，1=90°，2=180°，3=270°。先用 1。
+
+### 验证
+
+```bash
+strings BOOTAA64-EFIFB.EFI | grep "fbcon=rotate"
+# 输出：console=tty0 ... fbcon=rotate:1
+```
+
+确认 cmdline 已内嵌进内核映像。
+
+### 如果方向不对
+
+真机上如果发现文字是倒的或另一个方向，改这一个数字即可：
+
+| 现象 | 改成 |
+|---|---|
+| 文字躺倒、顶部在左 | `fbcon=rotate:1`（当前） |
+| 文字倒置 | `fbcon=rotate:2` |
+| 文字躺倒、顶部在右 | `fbcon=rotate:3` |
+| 本来就是正的 | 去掉该参数 |
+
+改完只需重新 `make Image`（30 秒）+ 重建镜像。
+
+### 注意
+
+这只影响 **fbcon（文本控制台）**。以后 GNOME 起来后，Wayland 的旋转由
+`/etc/xdg/monitors.xml` 或 mutter 的 transform 控制，与 fbcon 无关。
