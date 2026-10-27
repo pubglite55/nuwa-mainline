@@ -336,3 +336,27 @@ path = "Payloads/kernel.macho"
 
 > 注意：`boot_b` 是 Android 的 B 槽内核分区。覆盖后 B 槽不可用（A 槽不受影响）；
 > 恢复只需 `fastboot flash boot_b backup/nuwa-backup/boot_b.img`（已备份，201,326,592 字节）。
+
+
+### vbmeta_a 校验（已确认满足条件）
+
+`backup/nuwa-backup/vbmeta_a.img` 头部 dump：
+
+```
+0000  41 56 42 30 00 00 00 01 00 00 00 00 00 00 00 00   AVB0............
+...
+0070  00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00   ................
+0080  61 76 62 74 6f 6f 6c 20 31 2e 33 2e 30 00 00 00   avbtool 1.3.0...
+```
+
+- magic = `AVB0`，版本 1.0，算法 1（RSA2048）
+- **flags 在 `0x78`–`0x7B` = `0x00000003`** ✅
+
+`NUWA-PORT.md` 要求：
+
+> `vbmeta_a` must carry flags `0x3`, otherwise the ABL refuses to start `boot_a`.
+
+**当前已满足**，这解释了为什么我们的 `Mu-nuwa.img` 能被 ABL 接受并执行到 UEFI。
+
+> 若某次刷写后设备刷完直接回 fastboot（UEFI 不执行），优先检查 vbmeta_a 是否被覆盖成 flags≠0x3。
+> 恢复：`fastboot flash vbmeta_a backup/nuwa-backup/vbmeta_a.img`。
