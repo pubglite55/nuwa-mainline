@@ -32,13 +32,16 @@
 | `esp-nuwa-nodrm.img` | 64 MB | 512 B FAT32，nodrm 内核 47.8 MB | `vendor_boot_a` |
 | `esp-shell.img` | 64 MB | UEFI Shell + nodrm 内核 | `vendor_boot_a` |
 | `esp-refind.img` | 64 MB | rEFInd 0.14.0.2 (aa64) + nodrm 内核 | `vendor_boot_a` |
+| **`esp-efifb.img`** | 64 MB | 512 B FAT32，**本地 efifb 版**（44.2 MB） | `vendor_boot_a` |
+| **`payload-bootb-efifb.img`** | 192 MiB | **4 KiB FAT16**，本地 efifb 版 | `boot_b` |
 
 ### 内核源码/产物
 
 | 路径 | 说明 |
 |---|---|
 | `bootefi/BOOTAA64.EFI` | 正常版内核（DRM_MSM=y，49.3 MB） |
-| `bootefi-nodrm/BOOTAA64-NODRM.EFI` | nodrm 版（simpledrm/efifb，47.8 MB） |
+| `bootefi-nodrm/BOOTAA64-NODRM.EFI` | nodrm 版（simpledrm，47.8 MB，CI 7.0） |
+| `bootefi-efifb/BOOTAA64-EFIFB.EFI` | **本地 efifb 版**（44.2 MB，内核 7.4 + nuwa dts，14m22s 构建） |
 | `community-kernel/` | 社区 7.0 内核原始产物 |
 
 ### 备份（backup/nuwa-backup/）
@@ -69,6 +72,29 @@
 | 启动/显示/输入依赖必须 **`=y` 内建** | 模块缺失会**静默**失效（无报错） |
 | 借用固件画面要防**资源回收** | `clk_ignore_unused pd_ignore_unused` 仅作诊断 |
 | `fastboot flash:raw` 会包 boot header | Fat 无法解析，必须用 `dd` 或普通 `flash` |
+
+## 三条独立显示路径
+
+| 路径 | 内核 | 显示机制 | 来源 |
+|---|---|---|---|
+| A | `BOOTAA64.EFI`（49.3 MB） | `DRM_MSM=y`（msm 接管） | CI 社区 7.0 |
+| B | `BOOTAA64-NODRM.EFI`（47.8 MB） | `DRM_SIMPLEDRM`（模块化，可能拿不到） | CI 社区 7.0 |
+| C | `BOOTAA64-EFIFB.EFI`（44.2 MB） | **`FB_EFI=y` 内建 efifb**（最早接管，不依赖模块） | 本地 7.4 |
+
+C 路径的独特价值：efifb **内建**、初始化最早、零模块依赖，是"只求看到内核日志"时最可靠的一条。
+
+## 本地快速迭代能力（已建立）
+
+`~/nuwa/linux`（内核 7.4 + nuwa dts，4504 个 .o 已编译）：
+
+```bash
+cd ~/nuwa/linux
+export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+make -j20 Image        # 增量构建，实测 14 分钟（3155 个 .o 重编译）
+```
+
+**关键**：必须设 `CROSS_COMPILE`，否则用宿主 gcc 会报
+`unrecognized command-line option '-mlittle-endian'`。
 
 ## 当前唯一阻塞
 
