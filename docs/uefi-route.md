@@ -1098,3 +1098,45 @@ DXE Heap           0xBAE00000  +0x0D000000 (208 MB)
 显示保留区在 `0xB8000000`（43 MB），DXE 堆在 `0xBAE00000`（208 MB）——
 这些区域在 UEFI 退出后仍被占用，内核的 `/reserved-memory` 必须与之一致，
 否则会出现"内核把固件还在用的内存当空闲内存分配"的灾难。
+
+
+### dts 的 reserved-memory 与 UEFI 映射的差异（重要）
+
+社区 dts（`sm8550-xiaomi-nuwa.dts`）**删除了** `sm8550.dtsi` 原有的 reserved-memory，然后重新定义：
+
+```dts
+/delete-node/ &reserved_memory;
+...
+reserved_memory: reserved-memory { ... }
+```
+
+重新定义的 25 个区域里，**没有** UEFI 映射中的这两块：
+
+| UEFI 映射 | 地址 | 大小 | dts 里有吗 |
+|---|---|---|---|
+| Display Reserved | `0xB8000000` | 43 MB | ❌ 没有 |
+| DXE Heap | `0xBAE00000` | 208 MB | ❌ 没有 |
+
+**为什么这不成问题**：
+
+UEFI 路径下，内核的内存布局主要来自 **EFI memory map**（`ExitBootServices` 时获取），
+而不是 dtb 的 `/reserved-memory`。UEFI 自己会把 Display Reserved / DXE Heap
+标记为 `EfiReservedMemoryType`，内核不会去用。
+
+dtb 的 `reserved-memory` 在这里起**补充**作用（标记 UEFI 不认识的厂商区域，如 `qcom,rmtfs-mem`、
+`qcom,cmd-db`、`qcom,smem` 等有 `compatible` 的节点）。
+
+**反过来说**：如果走 ABL 路径（无 EFI memory map），内核就只能靠 dtb，
+而 dtb 里缺这两块 → 内核可能把显示保留区和 DXE 堆当空闲内存分配 → 画面花屏或直接崩。
+**这也是 UEFI 路径的一个隐性优势。**
+
+### 首启要验证的一项
+
+`cat /proc/device-tree/compatible` 应输出：
+
+```
+xiaomi,nuwa
+qcom,sm8550
+```
+
+如果变成 `qcom,sm8550-mtp` 之类，说明 UEFI 改写了根节点（需按经验库"内核早期恢复根身份"处理）。
