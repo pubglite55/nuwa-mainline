@@ -1,6 +1,6 @@
 # 产物哈希清单
 
-> 生成时间：2026-10-28 04:55（含 fbcon=rotate:1）
+> 生成时间：2026-10-28 04:57（含 fbcon=rotate:1）
 
 用途：刷机前核对，确认刷入的正是验证过的那一份。
 
@@ -12,7 +12,7 @@
 | esp-refind.img | 64 | 947e2818b0a2c6c36cc693215d6decd1c43ceb5bc1e1883a8482318f709d14e5 |
 | esp-shell.img | 64 | c1504384c9e0d0aa2d9daf8035eed5742fd4a3847f4776a0ee8d308cea5e9fdc |
 | payload-bootb-efifb.img | 192 | 9ef12b40051510ba1418c0bef581db46ee46f80341dbe790562993ff602fd3c9 |
-| payload-bootb-min.img | 192 | 5df5a12ca0a7e0e7b39679f82a94ed092f48a3416c75af0ed31c45d290ea6280 |
+| payload-bootb-min.img | 192 | 377968a2228dd86450d9b2a85d5843ae261db720f9c85849e7e56efcc6a271ba |
 | payload-bootb.img | 192 | d27978357dbfa9608eb77a5a94447e6bedccfb939b7af894c929ff103d3cc566 |
 | vendor_boot-initrd-esp.img | 67.71 | 32b19e8293d7fede9667ff44881e26873af303aef64813e25a9e5e4a8f7340f0 |
 | uefi-nuwa\Mu-nuwa.img | 2.03 | 5c60f2f021bc75c51e059d032d103312b55c613142846374000f192ea32a563a |
@@ -20,4 +20,4 @@
 | bootefi\BOOTAA64.EFI | 47.05 | 5019e69f16bcb99b244e81e5428e44f10ba409a843a42433a551399b50e6b30e |
 | bootefi-nodrm\BOOTAA64-NODRM.EFI | 45.62 | 70026142bdfbf3a61901fbdfd8b3e153ba539d80c0e1d8a679b179c747766335 |
 | bootefi-efifb\BOOTAA64-EFIFB.EFI | 42.2 | 04bb0c099ae8673a3e237ac49d626e69402a3b29916999d146776e8d250c72c7 |
-| bootefi-efifb\BOOTAA64-MIN.EFI | 42.2 | 7cc668061bcc783c55efac545bd797631c9a903437d811df1f54a9dbe3a55823 |
+| bootefi-efifb\BOOTAA64-MIN.EFI | 42.2 | 661c0100f3a8b40b763bdf132a55157d99f6c05acbc42998ab9b80da4404a86e |
