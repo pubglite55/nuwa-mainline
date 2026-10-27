@@ -47,6 +47,24 @@ if ($fb -match $Serial) {
   exit 1
 }
 
+# 1.5 电量检查（经验库：低电量会伪装成软件故障）
+$battery = $null
+try {
+  $raw = & $Adb -s $Serial shell "cat /sys/class/power_supply/battery/capacity 2>/dev/null || dumpsys battery 2>/dev/null | grep -m1 level" 2>&1 | Out-String
+  $m = [regex]::Match($raw, "(\d{1,3})")
+  if ($m.Success) { $battery = [int]$m.Groups[1].Value }
+} catch { }
+if ($null -eq $battery) {
+  AddStep "battery" $false "无法读取电量（设备可能在 fastboot 而非 Android）—— 请确认电量 >= 40%"
+} elseif ($battery -lt 40) {
+  AddStep "battery" $false ("电量 " + $battery + "% < 40%，不要开始实验：低电量会表现为黑屏/随机复位，被误判为软件故障")
+  $result.verdict = "low_battery"
+  $result | ConvertTo-Json -Depth 6 | Out-File "C:\Users\L1872\Documents\nuwa ubt\private\test-result.json" -Encoding utf8
+  exit 1
+} else {
+  AddStep "battery" $true ("电量 " + $battery + "%")
+}
+
 # 2. 选择镜像
 $uefi = Join-Path $Other "uefi-nuwa\Mu-nuwa.img"
 switch ($Mode) {
