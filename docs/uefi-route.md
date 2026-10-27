@@ -474,3 +474,44 @@ console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore
 > 启用顺序：控制器角色切换 → UCSI → VBUS → 枚举 → USB3/DP。
 
 我们的 initramfs 正是 NCM 路线（`configfs` + `ncm.usb0` + `192.168.0.1`），与推荐一致。
+
+
+## 第八轮：触控与按键的经验库要点
+
+### 我们的触控形态
+
+`experience/touch-and-input.md` 要求先判断形态：
+
+| 形态 | 特征 | 我们 |
+|---|---|---|
+| 独立触控芯片（固件在 flash） | 驱动相对独立，按普通 SPI/I2C 外设处理 | ✅ **FocalTech FTS 属于此类** |
+| TDDI（显示触控一体，固件在 RAM） | 面板复位会丢固件，需 `drm_panel_follower` | ❌ 不适用 |
+| THP（原始数据 + 主机算法） | 需要开源算法和标定 | ❌ 不适用 |
+
+nuwa 的触控是 `&spi4` 上的 `fts@0`（`compatible = "st,fts"`），独立芯片，
+**不需要**跟面板电源序列联动，这降低了首版难度。
+
+### 已记录的风险：GPI DMA 报 EIO
+
+> ### SPI 经 GPI DMA 传输报 EIO
+> 原因：GPI DMA 完成回调先设置了状态，SPI 核心因此不累加 `actual_length`。
+> 适用范围：高通 GENI SPI + GPI DMA；2026。
+
+我们的触控正好走 GENI SPI（`SPI_QCOM_GENI`）。若触控 probe 时报 EIO：
+
+1. 先确认 `/sys/kernel/debug/spi/` 与 dmesg 里的 `actual_length`
+2. 临时规避：从 `&spi4` 节点移除 `dmas`/`dma-names`，强制 PIO 模式
+3. 这是**临时规避**，需登记技术债（PIO 性能低、CPU 占用高）
+
+### 按键路径（已内建）
+
+> 电源键和音量减通常来自 PMIC PON（`pwrkey`/`resin`），音量加常是 PMIC GPIO 上的 `gpio-keys`。
+
+已内建 `POWER_RESET_QCOM_PON=y`。首启验证要点：
+- `/dev/input/event*` 里应有 `pm8941_pwrkey` 一类设备
+- 真实按下能看到 evdev 事件（不是节点存在就算通过）
+
+### 验收标准（经验库原文）
+
+> 触控：真实手指点击、滑动、多指、四角、横竖屏；冷启动、熄屏再亮屏、面板重新上电三种情况分别测；
+> **中断计数增长、输入设备存在、程序注入的事件都不算**。
