@@ -588,3 +588,36 @@ UART 节点 + 父串行引擎启用；固件与原厂版本对应（需早期加
 
 Wi-Fi/BT 需要从原厂系统提取固件与 board 数据（`/vendor/firmware`、`/persist`），
 属阶段 6 外设工作。**首版目标是启动 + 显示 + USB 网络**，Wi-Fi 留到链路稳定后。
+
+
+## 第十一轮：构建提速（全内建、无模块）
+
+### 问题
+
+`make Image modules` 要编译 defconfig 里全部 `=m` 驱动（数千个 `.o`），
+单次构建超过 **60 分钟**，两个 job 并行也压不下来。
+
+### 修正
+
+按经验库「整链内建」原则，把三个外设驱动也从 `=m` 改为 `=y`：
+
+```
+CONFIG_DRM_PANEL_SAMSUNG_AMB673CP01_M2=y    （原 =m）
+CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI=y        （原 =m）
+CONFIG_SND_SOC_CS35L41_I2C=y                （原 =m）
+CONFIG_SND_SOC_CS35L41=y / _LIB=y
+```
+
+然后去掉 `make modules`、模块收集、二次 `make Image` 三个步骤，只做一次 `make Image`。
+
+### 收益
+
+| | 改前 | 改后 |
+|---|---|---|
+| 构建步骤 | Image modules → 收集 .ko → 重打包 Image | 一次 `make Image` |
+| 构建时长 | **60+ 分钟** | 预计 10–15 分钟 |
+| initramfs 依赖 | 需带 `/lib/modules/*.ko` | **零模块依赖**，更符合"整链内建" |
+| 风险 | 模块漏打包 → 功能静默缺失 | 无此风险 |
+
+> 经验库原话："首启阶段把启动和恢复依赖全部 `=y`" —— 现在连外设也一起内建，
+> 代价是内核稍大（约 +400 KB），换来构建快、无模块依赖、无静默缺失。
