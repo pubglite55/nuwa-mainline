@@ -2,7 +2,30 @@
 
 > 前提：所有产物已就绪，见 `status.md`。
 
-## 第 0 步：确认设备在线，并核对镜像
+## 第 0 步：确认设备在线、电量足够、并核对镜像
+
+### 电量必须先查（经验库的"高频+耗时"坑）
+
+> **低电量或电脑 USB 供电不足，伪装成软件故障**
+> 现象：黑屏、触控失败、随机复位；同一份代码时好时坏。
+> 原因：背光升压和面板偏置直接从电池取电，电量很低时起不来；
+> 电脑 USB 口只给约 400–500 mA，桌面负载下净放电；**Linux 和 Fastboot 下通常不能净充电**。
+> 解决：离开 Android 前读新鲜电量，**低于 40% 不开始实验**；用墙充。
+
+```powershell
+# 设备在 Android 时读
+adb -s 3705933 shell cat /sys/class/power_supply/battery/capacity
+
+# 或在 fastboot 里读（部分设备支持）
+fastboot getvar battery-voltage
+```
+
+**低于 40% 就先充 20 分钟再来。** 否则你会看到"同一份镜像有时能起有时不能起"，
+然后花几小时去怀疑内核——实际只是电量不够。
+
+`run-test.ps1` 已内置这个检查（低于 40% 直接退出，verdict=`low_battery`）。
+
+### 镜像核对
 
 刷机前可先核对镜像哈希（见 [artifact-hashes.md](artifact-hashes.md)）：
 
