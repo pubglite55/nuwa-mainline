@@ -1803,3 +1803,62 @@ FatDxe 随后会尝试在**每个** BlockIo 上解析 FAT 引导扇区，
 
 **唯一无法离线确认的只剩一件事**：UFSDxe 这个预编译二进制在 nuwa 上是否真的初始化成功
 （它的内部行为无源码可查）。但这是"驱动能不能跑"的问题，不是"格式对不对"的问题。
+
+
+## 第三十二轮：经验库的九个通用故障模式（对照我们的项目）
+
+`experience/patterns.md` 归纳了九类反复出现的故障模式。逐条对照：
+
+| 模式 | 我们的情况 |
+|---|---|
+| **A. bootloader 改了你以为没变的东西** | ⚠️ 已识别：compatible 可能被改写；首启要 `cat /proc/device-tree/compatible` 验证 |
+| B. 资源没有真正的拥有者 | ⚠️ 相关：`clk_ignore_unused pd_ignore_unused` 就是"没人声明拥有"的资源 |
+| C. 时序和生命周期不对 | ⚠️ 相关：DisplayDxe 建立的显示状态与 ABL 不同 |
+| **D. 残留状态让结果失真** | ✅ 已规避：payload 用 `dd` 全量覆盖 192 MiB，无尾部残留 |
+| E. 测量方法本身错了 | ✅ 已有纪律：空输出判失败、正对照（512B vs 4KiB） |
+| F. 底层通过不等于用户能用 | ✅ 已内化：状态词分层（离线通过 ≠ 真机通过） |
+| G. 上游或发行版已经修了 | ✅ 用的是社区验证过的 7.0 内核 |
+| H. 别人的实现不能整搬 | ✅ 只借 UEFI 引导层，内核用主线 |
+| **I. 恢复路径本身不可靠** | ⚠️ **本轮改进** |
+
+### 模式 I 的具体命中与修正
+
+原文：
+
+> **怎么认出来**：计时到了没回去；正常重启卡在关机；设备不可达只能等人按键。
+> **通用处理**：恢复路径的每一步都有时限（`sync` 限时、`reboot -f -n`），并在最终组合上实测过。
+
+我们的 init 原来是：
+
+```sh
+/bin/busybox sleep 120
+/bin/busybox reboot -f
+```
+
+`reboot -f` 会先 sync 再重启。如果 USB gadget 或某个块设备在 sync 阶段卡住，
+**设备就停在"要重启但没重启"的状态**——既不在 Linux 也不在 fastboot，只能长按电源。
+
+**已改为**：
+
+```sh
+/bin/busybox sleep 120
+echo "nuwa-init: timeout, rebooting (force, no sync)" > /dev/kmsg
+/bin/busybox reboot -f -n 2>/dev/null || /bin/busybox reboot -f
+```
+
+`-n` 表示**不 sync**，直接复位。因为我们只读不写，不同步没有数据风险，
+但能避免卡在 sync。带 `||` 兜底，万一 busybox 版本不支持 `-n` 仍会执行 `-f`。
+
+### 模式 A 的补充纪律
+
+原文：
+
+> **凡是会被改写的属性都不要用来判断设备。**
+
+具体到我们：
+
+| 不要依赖 | 改用 |
+|---|---|
+| 根 `compatible` 判断机型 | 用 `qcom,msm-id`/`board-id` 或直接读 `/proc/device-tree/model` 并做兜底 |
+| `/proc/cmdline` 判断启动来源 | 用 `/sys/firmware/efi` 是否存在 |
+| 槽位属性位判断 A/B | 用 bootloader 自己的 `--set-active` |

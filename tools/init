@@ -115,5 +115,8 @@ echo "=== 系统就绪：可 telnet 192.168.0.1 ==="
 echo "=== 120 秒后自动重启 ==="
 echo ""
 
+# 超时自动重启：经验库模式 I —— 恢复路径每一步都要有时限
 /bin/busybox sleep 120
-/bin/busybox reboot -f
+echo "nuwa-init: timeout, rebooting (force, no sync)" > /dev/kmsg 2>/dev/null || true
+# -f 强制、-n 不同步：避免卡在 sync 导致设备不可达
+/bin/busybox reboot -f -n 2>/dev/null || /bin/busybox reboot -f
