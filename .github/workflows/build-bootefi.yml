@@ -140,7 +140,7 @@ jobs:
           make ARCH=arm64 defconfig
           ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/sm8550.config
           ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/ir-root"
-          ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused"
+          ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused fbcon=rotate:1"
           ./scripts/config --enable CMDLINE_EXTEND
           ./scripts/config --enable EFI_STUB
           ./scripts/config --enable FB_EFI
