@@ -1707,3 +1707,56 @@ console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore
 
 **建议**：v1 先把启动 + 显示 + 触控 + USB 网络做通。音频作为 v2 的独立子任务，
 前提是先从原厂提取到 `uefipil.cfg`。
+
+
+## ★ 第三十轮：4 KiB FAT 与 BlockIo 块大小的解耦（最后一个疑虑消除）
+
+### 担心的问题
+
+如果 UFSDxe 报告的 `BlockIo->Media->BlockSize` 是 512，
+而我们的 FAT BPB 说 `SectorSize = 4096`，会不会不匹配导致读错？
+
+### 源码答案：不会
+
+`FatPkg/EnhancedFatDxe/DiskCache.c`：
+
+```c
+DiskCache[CacheFat].BlockSize  = Volume->BlockIo->Media->BlockSize;
+DiskCache[CacheData].BlockSize = Volume->BlockIo->Media->BlockSize;
+```
+
+磁盘缓存直接采用 **BlockIo 的块大小**，与 FAT 的 `SectorSize` 无关。
+
+而所有读写偏移都是**字节偏移**：
+
+```c
+Bit     = Offset / DiskCache->BlockSize;          // 字节偏移 → BlockIo LBA
+LastBit = (Offset + Length - 1) / DiskCache->BlockSize;
+```
+
+FAT 的 `SectorSize` 只参与**簇号 ↔ 字节偏移**的换算（`BlockAlignment = HighBitSet32(SectorSize)`），
+换算完成后交给 BlockIo 时已经变成字节偏移，再由 BlockIo 自己的块大小折算成 LBA。
+
+### 结论
+
+| BlockIo 块大小 | FAT SectorSize | 能否工作 |
+|---|---|---|
+| 512 | 512 | ✅ |
+| 512 | **4096** | ✅ **字节偏移转换，自动适配** |
+| 4096 | 4096 | ✅ |
+| 4096 | 512 | ✅ |
+
+**这意味着 4 KiB FAT16 无论 UFSDxe 报什么块大小都能挂载**，
+前提只是"能读到分区数据"（即 UFSDxe 正确暴露了 boot_b 的 BlockIo）。
+
+### 风险进一步收窄
+
+| 环节 | 状态 |
+|---|---|
+| FAT 格式合法性 | ✅ 九项检查全过 |
+| EDK2 支持 4 KiB 扇区 | ✅ `MAX_BLOCK_ALIGNMENT=12` |
+| **FAT 扇区大小与 BlockIo 块大小解耦** | ✅ **本轮源码确认** |
+| UFSDxe 能否读到 boot_b | ⚠️ 唯一剩余未知（预编译二进制，只能真机观察） |
+
+现在剩下的问题纯粹是"UFSDxe 有没有把 boot_b 暴露出来"，
+不再是"格式对不对"的问题。
