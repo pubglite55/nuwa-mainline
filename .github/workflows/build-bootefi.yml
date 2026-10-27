@@ -75,6 +75,12 @@ jobs:
           ./scripts/config --enable OVERLAY_FS
           ./scripts/config --enable PHY_QCOM_QMP_PCIE
           ./scripts/config --enable RFKILL
+          # 外设驱动也内建：避免 make modules 编译数千个模块（构建 1 小时+）
+          ./scripts/config --enable DRM_PANEL_SAMSUNG_AMB673CP01_M2
+          ./scripts/config --enable TOUCHSCREEN_ST_FTS_V521_SPI
+          ./scripts/config --enable SND_SOC_CS35L41_I2C
+          ./scripts/config --enable SND_SOC_CS35L41
+          ./scripts/config --enable SND_SOC_CS35L41_LIB
           ./scripts/config --enable CLK_QCOM_DISPCC_SM8550
           ./scripts/config --enable QCOM_CLK_RPMH
           ./scripts/config --enable PINCTRL_SM8550
@@ -88,27 +94,9 @@ jobs:
           make ARCH=arm64 olddefconfig
           grep -E "CONFIG_INITRAMFS_SOURCE|CONFIG_CMDLINE=|CONFIG_USB_DWC3_QCOM|CONFIG_USB_F_NCM" .config
 
-      - name: 编译内核与模块
+      - name: 编译内核（全部内建，无模块）
         run: |
           cd kc
-          make ARCH=arm64 -j"$(nproc)" Image modules
-
-      - name: 收集外设模块到 initramfs
-        run: |
-          set -e
-          ROOT="$GITHUB_WORKSPACE/ir-root"
-          cd kc
-          find . -name "panel-samsung-amb673cp01-m2.ko" -o -name "fts*.ko" -o -name "snd-soc-cs35l41*.ko" | tee /tmp/modlist.txt
-          while read -r m; do
-            [ -n "$m" ] && cp "$m" "$ROOT/lib/modules/"
-          done < /tmp/modlist.txt
-          ls -l "$ROOT/lib/modules/"
-
-      - name: 重新打包内核（含模块）
-        run: |
-          set -e
-          cd kc
-          rm -f usr/initramfs_data.cpio* usr/.initramfs_data.* 2>/dev/null || true
           make ARCH=arm64 -j"$(nproc)" Image
           ls -l arch/arm64/boot/Image
           cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/BOOTAA64.EFI"
@@ -179,6 +167,12 @@ jobs:
           ./scripts/config --enable OVERLAY_FS
           ./scripts/config --enable PHY_QCOM_QMP_PCIE
           ./scripts/config --enable RFKILL
+          # 外设驱动也内建：避免 make modules 编译数千个模块（构建 1 小时+）
+          ./scripts/config --enable DRM_PANEL_SAMSUNG_AMB673CP01_M2
+          ./scripts/config --enable TOUCHSCREEN_ST_FTS_V521_SPI
+          ./scripts/config --enable SND_SOC_CS35L41_I2C
+          ./scripts/config --enable SND_SOC_CS35L41
+          ./scripts/config --enable SND_SOC_CS35L41_LIB
           ./scripts/config --enable CLK_QCOM_DISPCC_SM8550
           ./scripts/config --enable QCOM_CLK_RPMH
           ./scripts/config --enable PINCTRL_SM8550
@@ -190,13 +184,9 @@ jobs:
           ./scripts/config --enable QCOM_LLCC
           ./scripts/config --enable SCSI_UFS_QCOM
           make ARCH=arm64 olddefconfig
-      - name: 编译
+      - name: 编译（全部内建，无模块）
         run: |
           cd kc
-          make ARCH=arm64 -j"$(nproc)" Image modules
-          ROOT="$GITHUB_WORKSPACE/ir-root"
-          find . -name "panel-samsung-amb673cp01-m2.ko" -o -name "fts*.ko" -o -name "snd-soc-cs35l41*.ko" | while read -r m; do [ -n "$m" ] && cp "$m" "$ROOT/lib/modules/"; done
-          rm -f usr/initramfs_data.cpio* usr/.initramfs_data.* 2>/dev/null || true
           make ARCH=arm64 -j"$(nproc)" Image
           cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/BOOTAA64-NODRM.EFI"
       - name: 上传
