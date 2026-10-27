@@ -90,6 +90,9 @@ jobs:
           ./scripts/config --enable QCOM_RPMH
           ./scripts/config --enable ARM_SMMU
           ./scripts/config --enable QCOM_LLCC
+          ./scripts/config --enable INPUT_GPIO_KEYS
+          ./scripts/config --enable KEYBOARD_GPIO
+          ./scripts/config --enable INPUT_KEYBOARD
           ./scripts/config --enable SCSI_UFS_QCOM
           make ARCH=arm64 olddefconfig
           grep -E "CONFIG_INITRAMFS_SOURCE|CONFIG_CMDLINE=|CONFIG_USB_DWC3_QCOM|CONFIG_USB_F_NCM" .config
@@ -182,6 +185,9 @@ jobs:
           ./scripts/config --enable QCOM_RPMH
           ./scripts/config --enable ARM_SMMU
           ./scripts/config --enable QCOM_LLCC
+          ./scripts/config --enable INPUT_GPIO_KEYS
+          ./scripts/config --enable KEYBOARD_GPIO
+          ./scripts/config --enable INPUT_KEYBOARD
           ./scripts/config --enable SCSI_UFS_QCOM
           make ARCH=arm64 olddefconfig
       - name: 编译（全部内建，无模块）
