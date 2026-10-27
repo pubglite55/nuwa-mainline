@@ -621,3 +621,53 @@ CONFIG_SND_SOC_CS35L41=y / _LIB=y
 
 > 经验库原话："首启阶段把启动和恢复依赖全部 `=y`" —— 现在连外设也一起内建，
 > 代价是内核稍大（约 +400 KB），换来构建快、无模块依赖、无静默缺失。
+
+
+## 第十二轮：音频（CS35L41 ×2）路线要点
+
+`experience/audio.md`：
+
+### 前提条件（缺一不可）
+
+> ADSP 固件加载（PAS）、QRTR、PD mapper、GPR 都工作。
+> **PD mapper 报 "no support for the platform" 先查根 compatible 是否被改写。**
+
+已内建：`QRTR`/`QRTR_SMD`/`QCOM_PD_MAPPER`。
+
+### 逐层推进（不要跳步）
+
+```
+open → hw_params → prepare → DSP 接受播放图 → 功放启动
+     → 不可闻的全零播放测试 → 电气回环 → 人耳
+```
+
+### 三个会误导人的坑
+
+| 现象 | 原因 |
+|---|---|
+| 播放图能打开、TDM 参数被接受，但功放不出声 | 位时钟（BCLK）极性/时钟属性与原厂不一致 —— **"唯一的差异"要最先单变量验证** |
+| 功放上电、PCM 能打开、测试"通过"，人听不到 | quirk 用根 compatible 选择，被 bootloader 改写后永远选不中 → **改用声卡名选择** |
+| `open` 返回 `EINVAL`，`prepare` 报 `Invalid channels (8)` | 前端只给 S32 而 q6apm 只支持 S16/S24；主线 AudioReach 前端拒绝 >4 声道 → **前端用 2 声道 S16，DSP 内做通道混合** |
+
+### 「根 compatible 被改写」是贯穿多个子系统的共性问题
+
+经验库在 bootloader、音频、显示（UBWC 配置）三处都提到同一件事：
+
+> ABL 把 dtbo 根上的 `compatible`、`model`、`msm-id`、`board-id` 覆盖到运行时设备树根上，
+> 变成平台通用名（例如 `qcom,<平台>-mtp`）。
+
+**UEFI 路径下这一条需要重新确认**：UEFI 的 FdtBlob 是社区 dts 编译的，
+但它是否也会改写根节点、改写成什么，只有上机 `cat /proc/device-tree/compatible` 才知道。
+这将是首启检查清单里的一项。
+
+### 首启检查清单（累计）
+
+| 检查项 | 命令 | 期望 |
+|---|---|---|
+| 根 compatible | `cat /proc/device-tree/compatible` | 与源码一致（若被改写需内核早期恢复） |
+| 根 model | `cat /proc/device-tree/model` | 同上 |
+| 输入设备 | `cat /proc/bus/input/devices` | 有 pwrkey、fts |
+| USB 网络 | `ip -4 addr show usb0` | 192.168.0.1/24 |
+| 显示 | `cat /sys/class/graphics/fb0/virtual_size` | 1440,3200 |
+| 延迟探测 | `cat /sys/kernel/debug/devices_deferred` | 空或可解释 |
+| 虚拟化误判 | `systemd-detect-virt` | 不是 vm（hypervisor 节点需遮蔽） |
