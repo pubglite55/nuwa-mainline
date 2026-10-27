@@ -18,6 +18,8 @@
 | [install-plan.md](install-plan.md) | 三阶段路线（验证 → 部署 Ubuntu → 桌面/双系统） | 规划后续 |
 | [panel-params.md](panel-params.md) | 面板参数 | 做原生显示接管时 |
 | [peripherals.md](peripherals.md) | 外设对照 | 做外设时 |
+| [**tech-debt.md**](tech-debt.md) | **技术债表（7 条未还，按影响排序）** | **每次用临时做法时必须登记** |
+| [artifact-hashes.md](artifact-hashes.md) | 产物哈希清单 | 刷机前核对 |
 
 ## 产物清单（other/）
 
