@@ -118,3 +118,50 @@ Shell> \Linux\BOOTAA64.EFI            # 直接启动 Linux 内核
 | 3. Shell 手动 | Shell 里执行 `\Linux\BOOTAA64.EFI` | 卷可读 + 有输入设备 |
 
 三条都不成 → 说明卷不可读（FAT 挂载问题），按 2c 处理。
+
+
+## 9. 社区提供的两条「直接写分区」通道
+
+### 9a. UEFI Mass Storage（开机时按住音量下）
+
+来自 `Project-Silicium/Guides → SoCs/Snapdragon/Fixing-UFS-LUNs`：
+
+1. 刷 UEFI 镜像后重启
+2. **看到 Project Silicium Logo 时按住音量下**
+3. 屏幕出现蓝手机图标
+4. 用音量键选到 `Current LUN: 0`，电源键确认
+5. 连 PC → 出现一个大磁盘（含全部分区）
+
+> 之前观察到 "Generic STORAGE DEVICE / No Media"，就是因为没进这个专用模式，Mass Storage 未激活。
+
+### 9b. TWRP MassStorage.sh（把 /dev/block/sda 暴露为 U 盘）
+
+来自 `Guides → SoCs/Snapdragon/Mass-Storage`，SM8550 用 `0x0A600000/MassStorage.sh`：
+
+```sh
+setenforce 0
+echo 0xEF > /config/usb_gadget/g1/bDeviceClass
+echo 0x02 > /config/usb_gadget/g1/bDeviceSubClass
+echo 0x01 > /config/usb_gadget/g1/bDeviceProtocol
+ln -s /config/usb_gadget/g1/functions/mass_storage.0/ /config/usb_gadget/g1/configs/b.1/
+echo /dev/block/sda > /config/usb_gadget/g1/configs/b.1/mass_storage.0/lun.0/file
+echo 0 > .../lun.0/cdrom
+echo 0 > .../lun.0/removable
+echo 0 > .../lun.0/ro
+sh -c 'echo > /config/usb_gadget/g1/UDC; echo a600000.dwc3 > /config/usb_gadget/g1/UDC' &
+```
+
+在 TWRP 里执行后，PC 直接看到整个 UFS LUN0，可以用 gdisk/parted 操作分区、格式化、拷文件——**不需要 fastboot 刷整个镜像**。
+
+### 9c. 本项目的综合脚本
+
+`tools/twrp-install-esp.sh`：
+
+```sh
+adb push other/esp-nuwa.img /tmp/
+adb push public/nuwa/tools/twrp-install-esp.sh /tmp/
+adb shell sh /tmp/twrp-install-esp.sh                  # 只写镜像
+adb shell sh /tmp/twrp-install-esp.sh --set-esp-type   # 写镜像 + 改 GPT 类型为 ESP
+```
+
+脚本会：定位 vendor_boot_a 分区号/起始扇区 → dd 写入 → 尝试挂载验证 → 打印分区类型恢复命令。
