@@ -50,6 +50,7 @@ jobs:
           ./scripts/config --disable CMDLINE_FROM_BOOTLOADER
           ./scripts/config --enable CMDLINE_FORCE
           ./scripts/config --enable EFI_STUB
+          ./scripts/config --enable FRAMEBUFFER_CONSOLE_ROTATION
           ./scripts/config --enable FB_EFI
           ./scripts/config --enable DRM_SIMPLEDRM
           ./scripts/config --enable USB_GADGET
@@ -145,6 +146,7 @@ jobs:
           ./scripts/config --disable CMDLINE_FROM_BOOTLOADER
           ./scripts/config --enable CMDLINE_FORCE
           ./scripts/config --enable EFI_STUB
+          ./scripts/config --enable FRAMEBUFFER_CONSOLE_ROTATION
           ./scripts/config --enable FB_EFI
           ./scripts/config --enable DRM_SIMPLEDRM
           ./scripts/config --disable DRM_MSM
