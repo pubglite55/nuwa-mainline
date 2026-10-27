@@ -794,3 +794,32 @@ QEMU 里 `console=ttyAMA0` 没建立对应设备，`/dev/tty0` 也不存在，
 
 **已修正 `tools/init`**：输出设备按 `/dev/tty0` → `/dev/console` → `/dev/ttyAMA0` 顺序兜底，
 并额外写一行到 `/dev/kmsg`，保证即使屏幕不可用也能从 dmesg/pstore 取到执行痕迹。
+
+
+### 第二次 QEMU 验证：两个改进都生效
+
+加上 `clk_ignore_unused pd_ignore_unused` 并更新 init 后重跑：
+
+```
+[16.671423] clk: Not disabling unused clocks               ← 从 "Disabling" 变为 "Not disabling"
+[16.671775] PM: genpd: Not disabling unused power domains  ← 同上
+[17.384674] Run /init as init process
+[17.801054] nuwa-init: output bound                        ← 新 init 执行并写了 kmsg
+```
+
+| 改进 | 验证结果 |
+|---|---|
+| `clk_ignore_unused pd_ignore_unused` | ✅ 日志从 "Disabling unused clocks" 变为 "**Not** disabling unused clocks" |
+| init 输出设备兜底 | ✅ 出现 `nuwa-init: output bound`（即使 tty0 不存在也写进了 kmsg） |
+
+**这意味着**：真机上即使屏幕不亮，也能从 dmesg/pstore 拿到 `/init` 的执行痕迹，
+而不是像之前那样完全静默。
+
+### 本地迭代效率（实测）
+
+| 改动类型 | 耗时 |
+|---|---|
+| 改 `.config`（大量驱动） | 14 分钟（3155 个 .o 重编译） |
+| **只改 initramfs / init** | **30.9 秒**（重打包 + 重链接） |
+
+所以"改 init → 验证 → 再改"这个循环非常快，可以反复试。
