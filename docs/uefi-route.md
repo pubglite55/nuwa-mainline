@@ -321,3 +321,18 @@ path = "Payloads/kernel.macho"
 我们用的是绝对路径 `path = "\\EFI\\BOOT\\BOOTAA64.EFI"`，经 `UniXNUNormalizePath` 的
 `Absolute = (Path[0] == '\\')` 判定也是合法的。若真机上配置不被识别，可改为
 `path = "Payloads/BOOTAA64.EFI"`（把内核放 `\EFI\UniXNU\Payloads\`）以完全对齐社区写法。
+
+
+### 分区尺寸核对（fastboot getvar 存档）
+
+| 分区 | 大小（hex） | 字节 | 我们的镜像 |
+|---|---|---|---|
+| `boot_a` / `boot_b` | `0xC000000` | 201,326,592（192 MiB） | `payload-bootb.img` = **201,326,592** ✓ 完全匹配 |
+| `vendor_boot_a` | `0x6000000` | 100,663,296（96 MiB） | `esp-nuwa.img` = 67,108,864（64 MiB）→ 余 32 MiB 保留旧数据，FatDxe 按 BPB 读不受影响 |
+| `init_boot_a` | `0x800000` | 8,388,608（8 MiB） | 未使用 |
+| `userdata` | `0x3804BBB000` | 240,525,004,800（≈224 GiB） | 未动 |
+
+`payload-bootb.img` 与 `boot_b` 尺寸**精确相等**，`fastboot flash boot_b` 会完整覆盖该分区。
+
+> 注意：`boot_b` 是 Android 的 B 槽内核分区。覆盖后 B 槽不可用（A 槽不受影响）；
+> 恢复只需 `fastboot flash boot_b backup/nuwa-backup/boot_b.img`（已备份，201,326,592 字节）。
