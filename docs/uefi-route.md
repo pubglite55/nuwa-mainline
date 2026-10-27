@@ -1140,3 +1140,79 @@ qcom,sm8550
 ```
 
 如果变成 `qcom,sm8550-mtp` 之类，说明 UEFI 改写了根节点（需按经验库"内核早期恢复根身份"处理）。
+
+
+## ★ 第二十一轮：第四条路径 —— FAT 放进 vendor ramdisk（不依赖 UFS 驱动）
+
+### 线索来源
+
+读 `ShengBootMemoryDxe.c` 的文件头注释：
+
+> Memory and RAM disk from the device tree the previous stage handed over.
+> The previous stage (a Linux-style boot loader) passes the physical address of a flattened
+> device tree in x0, which SEC keeps in a HOB. ...
+>
+> - DRAM that no firmware region claims and no reserved-memory node covers is added to the GCD
+>   as system memory, up to a fixed amount;
+> - **the initrd the loader placed in memory (`/chosen` `linux,initrd-start/-end`) is published
+>   as a read-only block device, so a FAT image in the boot image's ramdisk shows up as a normal
+>   volume.**
+
+### 同时确认 BootShim 不做这件事
+
+`BootShim.S` 全文只有 849 字节，逻辑就三步：
+
+```asm
+_Start:
+  mov   x4, x1
+  ldr   x5, =FD_BASE        // 0xA7100000
+  cmp   x4, x5
+  beq   _Entry              // 已在目标地址就直接跳
+  ldr   x6, =FD_SIZE
+_CopyLoop:
+  ldp   x2, x3, [x4], #16   // 把 FD 复制到 0xA7100000
+  stp   x2, x3, [x5], #16
+  subs  x6, x6, #16
+  b.ne  _CopyLoop
+_Entry:
+  br    x5
+```
+
+**它不设置 `/chosen`**。initrd 的信息来自 ABL 提供的 dtb（SEC 存进 HOB）。
+
+### 于是有了第四条路径
+
+ABL 会把 `vendor_boot` 的 ramdisk 加载到内存并写 `/chosen linux,initrd-start`。
+如果这个 ramdisk **本身就是一个 FAT 镜像**，UEFI 会把它发布成只读块设备，
+FatDxe 就能挂载，UniXNU 就能读到 `\EFI\UniXNU\unixnu.toml`。
+
+**关键优势：整条链路不经过 UFS 驱动。** 块设备在内存里，与分区表、GPT 类型、
+UFSDxe 的 LUN 枚举全都无关。
+
+### 已生成的产物
+
+`other/vendor_boot-initrd-esp.img`（71,004,160 B = 67.7 MiB）
+
+```
+magic      : VNDRBOOT  v4  page=4096
+ramdisk    : 30,904,915 → 67,108,864（FAT32 卷标 NUWAESP，含内核 44.25 MB）
+dtb kept   : 3,885,131（8 个 FDT 变体完整保留）
+table      : 108
+total      : 67.7 MiB（vendor_boot_a 分区 96 MiB，余量充足）
+```
+
+新工具 `tools/mk-vendor-boot-ramdisk.py`（替换 ramdisk，保留 dtb/table/bootconfig）。
+
+刷写：`tools/flash-uefi.ps1 -Initrd`
+
+### 五条路径汇总（按可靠性排序）
+
+| # | 路径 | payload 位置 | 依赖 | 镜像 |
+|---|---|---|---|---|
+| 1 | **ramdisk 块设备** | vendor_boot ramdisk | 只要 ABL 加载 vendor_boot | `vendor_boot-initrd-esp.img` |
+| 2 | boot_b 数据分区 | `boot_b`（4 KiB FAT16） | UFSDxe + PartitionDxe + FatDxe | `payload-bootb*.img` |
+| 3 | vendor_boot_a 分区 | `vendor_boot_a`（512 B FAT32） | 同上 | `esp-*.img` |
+| 4 | UEFI Shell 手动 | 任意可读卷 | 卷可读 + 输入设备 | `esp-shell.img` |
+| 5 | rEFInd | 任意可读卷 | 同上 | `esp-refind.img` |
+
+**路径 1 的最大价值**：它把"UFS 驱动能否工作"这个最大未知项**从关键路径上移除了**。
