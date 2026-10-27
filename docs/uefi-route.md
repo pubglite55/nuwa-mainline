@@ -406,3 +406,34 @@ OVERLAY_FS
 
 诊断手段（临时，不可长期保留）：`clk_ignore_unused`、`pd_ignore_unused` ——
 用来确认"是不是资源回收"后再撤掉。
+
+
+## 显示路线（按经验库修正）
+
+`experience/display.md` 明确两种路线：
+
+| | 借用固件画面（simple-framebuffer + simpledrm） | 原生接管（DPU + DSI + 面板驱动） |
+|---|---|---|
+| 原理 | bootloader 点亮面板，Linux 只往这块内存画图 | 内核重新初始化控制器和面板 |
+| 首次出图 | 快（一两天） | 有现成面板驱动几天；自写一到两周 |
+| 能力 | 无亮度/熄屏/刷新率/外接，GNOME 连接器是 Unknown | 全部具备 |
+
+**原生接管的关键步骤**（原文第 3 条）：
+
+> 先用模块方式加载显示驱动（`msm` 做成 `=m`，启动时不加载，调试通道起来后手动 `modprobe`），
+> 这样挂死前能拿到日志。
+
+### 因此首启的正确选择
+
+- **首启用 nodrm 版**（`DRM_MSM=n` + simpledrm 借用 UEFI framebuffer）——先拿到画面和日志
+- **不要**首启就用 `DRM_MSM=y` 正常版：msm 会复位硬件并移除 simpledrm，一旦参数不对就黑屏无日志
+- 等调试通道稳定后，再把 `msm` 做成 `=m` 手动 modprobe 做原生接管
+
+### nodrm 版已加诊断参数
+
+```
+console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused
+```
+
+`clk_ignore_unused` + `pd_ignore_unused` 是**临时诊断手段**：用来确认"simpledrm 的 framebuffer
+是否因资源回收而黑掉"。确认后必须撤掉（长期保留会导致无法省电、无法休眠、无法进上游）。
