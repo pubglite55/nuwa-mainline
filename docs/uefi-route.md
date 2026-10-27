@@ -1014,3 +1014,38 @@ QEMU 实测结果：
 | 网卡配置 | `ip link set` + `ip addr add` | `ifconfig usb0 192.168.0.1 netmask 255.255.255.0 up` |
 | 网卡状态 | `ip -4 addr show` | `ifconfig usb0` 的 `inet addr` 行 |
 | 诊断 | 失败时打印 `dwc3|udc|phy.*usb` 的 dmesg | — |
+
+
+## 第十九轮：内核配置完整性审查
+
+### 审查结果
+
+| 子系统 | 配置 | 状态 |
+|---|---|---|
+| **USB gadget** | `USB_DWC3=y` `USB_DWC3_QCOM=y` `USB_GADGET=y` `USB_F_NCM=y` `USB_CONFIGFS=y` `USB_CONFIGFS_NCM=y` `TYPEC=y` `USB_ROLE_SWITCH=y` | ✅ 全内建 |
+| **网络** | `NET=y` `INET=y` `PACKET=y` `IP_PNP=y` | ✅ 全内建 |
+| **显示** | `FB_EFI=y`（efifb 内建）；`DRM=m` `DRM_SIMPLEDRM=m` `FB_SIMPLE=m`（模块，但 efifb 已够） | ✅ |
+| **触控** | `TOUCHSCREEN_ST_FTS_V521_SPI=y` `INPUT_EVDEV=y` | ✅ |
+| **电源键** | `POWER_RESET_QCOM_PON=y` | ✅ |
+| **存储** | `BLK_DEV_SD=y` `SCSI_UFSHCD=y` `EXT4_FS=y` | ✅ |
+| **UFS 控制器** | `SCSI_UFS_QCOM=m` | ⚠️ **本轮改为 `=y`** |
+| **GPIO 按键** | `INPUT_GPIO_KEYS` 未设置 | ⚠️ **本轮改为 `=y`**（音量键） |
+
+### 为什么 UFS 要内建
+
+阶段 1 用自包含 initramfs，UFS 不参与启动。但阶段 2 要挂 rootfs 分区
+（`root=PARTLABEL=... rootwait`），届时 UFS 控制器必须在早期可用。
+如果它是模块而 initramfs 里没有对应 `.ko`，内核根本找不到根分区 —— 正是经验库说的
+"驱动编成 `=m` 但镜像里没有模块目录，功能静默缺失"。
+
+提前改成 `=y` 可以避免阶段 2 踩这个坑。
+
+### 音量键
+
+经验库原文：
+
+> 电源键和音量减通常来自 PMIC PON（`pwrkey`/`resin`），
+> **音量加常是 PMIC GPIO 上的 `gpio-keys`**。
+
+`POWER_RESET_QCOM_PON=y` 覆盖 pwrkey/resin，但音量加走 `gpio-keys`，需要
+`INPUT_GPIO_KEYS=y` + `KEYBOARD_GPIO=y`。
