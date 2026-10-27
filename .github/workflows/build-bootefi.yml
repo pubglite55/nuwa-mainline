@@ -1,0 +1,77 @@
+name: build-bootefi
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bootefi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bootefi:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev \
+            cpio kmod device-tree-compiler python3 zstd busybox-static
+
+      - name: 克隆社区内核（7.0 + nuwa 补丁）
+        run: |
+          git clone --depth 1 --branch 7.0 https://github.com/alfaonyt/nuwa-mainline.git kc
+          cd kc && git log --oneline -1
+
+      - name: 生成内嵌 initramfs
+        run: |
+          set -e
+          ROOT="$PWD/ir-root"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"/bin "$ROOT"/dev "$ROOT"/proc "$ROOT"/sys "$ROOT"/tmp
+          cp /bin/busybox "$ROOT/bin/busybox"
+          cp tools/init "$ROOT/init"
+          chmod 755 "$ROOT/init" "$ROOT/bin/busybox"
+          file "$ROOT/bin/busybox"
+          (cd "$ROOT" && find . | cpio -o -H newc --owner=0:0 2>/dev/null | gzip -9) > "$PWD/initramfs.cpio.gz"
+          ls -l "$PWD/initramfs.cpio.gz"
+
+      - name: 配置自包含内核（内嵌 initramfs + 内置 cmdline）
+        run: |
+          set -e
+          cd kc
+          make ARCH=arm64 defconfig
+          ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/sm8550.config
+          # 身份标识对齐 ABL
+          DTS=arch/arm64/boot/dts/qcom/sm8550-xiaomi-nuwa.dts
+          sed -i 's/qcom,msm-id = <[^;]*>;/qcom,msm-id = <0x25c 0x20000>;/' "$DTS"
+          sed -i 's/qcom,board-id = <[^;]*>;/qcom,board-id = <0x00 0x00>;/' "$DTS"
+          # 内嵌 initramfs 与命令行
+          ./scripts/config --set-str INITRAMFS_SOURCE "$GITHUB_WORKSPACE/initramfs.cpio.gz"
+          ./scripts/config --set-str CMDLINE "console=tty0 ignore_loglevel loglevel=7"
+          ./scripts/config --enable CMDLINE_EXTEND
+          ./scripts/config --enable EFI_STUB
+          ./scripts/config --enable FB_EFI
+          ./scripts/config --enable DRM_SIMPLEDRM
+          make ARCH=arm64 olddefconfig
+          grep -E "CONFIG_INITRAMFS_SOURCE|CONFIG_CMDLINE=|CONFIG_EFI_STUB|CONFIG_FB_EFI|CONFIG_DRM_SIMPLEDRM" .config
+
+      - name: 构建内核
+        run: |
+          cd kc
+          make ARCH=arm64 -j"$(nproc)" Image
+          ls -l arch/arm64/boot/Image
+          cp arch/arm64/boot/Image "$GITHUB_WORKSPACE/BOOTAA64.EFI"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootefi
+          path: |
+            BOOTAA64.EFI
+            initramfs.cpio.gz
+          if-no-files-found: error
