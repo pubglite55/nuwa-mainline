@@ -1216,3 +1216,79 @@ total      : 67.7 MiB（vendor_boot_a 分区 96 MiB，余量充足）
 | 5 | rEFInd | 任意可读卷 | 同上 | `esp-refind.img` |
 
 **路径 1 的最大价值**：它把"UFS 驱动能否工作"这个最大未知项**从关键路径上移除了**。
+
+
+## ★ 第二十二轮：第四条路径被否定，但发现了更好的东西
+
+### 第四条路径（initrd 块设备）在 nuwa 上不可用
+
+读 `ShengBootMemoryDxe.c` 的主流程：
+
+```c
+//
+// The payload is published from the UFS boot_b partition, and Fat attaches it
+// on its own. Every DRAM access made here (GCD scan for the OEM tag, initrd
+// remap) faults on nuwa, so keep this switch off until the memory map is
+// understood. Set it to TRUE only when the initrd path is being debugged.
+//
+WriteBootLog (Dtb);
+
+if (mBringUpTouchMemory) {
+  AddMemory ((VOID *)(UINTN)Dtb);
+  PublishInitrd ((VOID *)(UINTN)Dtb);
+} else {
+  ReportStatus ("0");
+}
+```
+
+`mBringUpTouchMemory` **默认 FALSE**，所以 `PublishInitrd` 不会被调用。
+原因写得很明确：**GCD 扫描与 initrd remap 在 nuwa 上都会 fault**。
+
+⇒ 上一轮设想的"把 FAT 放进 ramdisk"这条路，**在官方固件里是关闭的**。
+要启用必须改源码 + 先解决内存映射问题，不值得在阶段 1 做。
+
+**结论：官方设计就是 payload 放 UFS 的 `boot_b` 分区**，与 NUWA-PORT.md 一致。
+
+### 但发现了 WriteBootLog —— 一个不依赖 console 的诊断手段
+
+`WriteBootLog` 在 `if` 之前调用（**总是执行**），逻辑：
+
+1. 遍历所有 BlockIo 设备
+2. 找 `(LastBlock+1) * BlockSize == 192 MiB` 的分区（`boot_a`/`boot_b` 同尺寸）
+3. 读第一块，检查偏移 3 处的 8 字节 **OEM 标签是否等于 `MTOO4043`**
+4. 命中后，在**最后一块**写入：
+
+```
+NUWABOOT count=<N> dtb=0x<addr> started
+```
+
+### 我们的 payload OEM 标签原本不匹配
+
+| 工具 | OEM 标签 |
+|---|---|
+| `mformat`（mtools 4.0.49） | `MTOO4049` ← 我们原来的 |
+| `mkfs.vfat` | `mkfs.fat` |
+| **UEFI 期望** | **`MTOO4043`** |
+
+已把 `payload-bootb.img` 和 `payload-bootb-efifb.img` 的 OEM 标签 patch 成 `MTOO4043`，
+FAT 校验仍然通过。
+
+### 这个诊断的价值
+
+真机上如果屏幕没输出（最坏情况），可以进 TWRP 读 `boot_b` 最后一块：
+
+```
+adb push public/nuwa/tools/read-bootlog.sh /tmp/
+adb shell sh /tmp/read-bootlog.sh
+```
+
+判读：
+
+| 现象 | 含义 |
+|---|---|
+| 有 `NUWABOOT count=N` 且 N 递增 | UEFI 走到了交接点，内核被启动过（问题在内核侧） |
+| 有该字符串但 count 一直是 1 | 内核启动后没重启（可能卡住） |
+| 没有该字符串 | UEFI 没走到 WriteBootLog（更早环节失败） |
+| 全零 | boot_b 没被识别为 payload（检查 OEM 标签） |
+
+**这是继 pstore 之后的第二个"事后取证"通道**，而且不依赖内核是否活着。
