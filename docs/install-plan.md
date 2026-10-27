@@ -108,3 +108,51 @@ base + chroot 安装的好处：可以精确控制装哪些包，避免把 x86 �
 
 **注意**：这一步需要 UFS 驱动工作（`SCSI_UFS_QCOM=y` 已内建）。
 如果阶段 1 发现 UFSDxe 有问题，阶段 2 也要相应调整。
+
+
+### ubuntu-base 的实际内容（本地验证）
+
+在 WSL 里解压实测：
+
+| 项 | 结果 |
+|---|---|
+| 解压 | ✅ 退出码 0 |
+| `usr/bin/bash` | ✅ |
+| `usr/bin/apt` | ✅ |
+| `etc/os-release` | ✅ **Ubuntu 26.04 LTS (Resolute Raccoon)** |
+| `usr/lib/aarch64-linux-gnu/libc.so.6` | ✅ |
+| **`lib/systemd/systemd`** | ❌ **缺失** |
+| 解压后体积 | 117 MB |
+
+### 这意味着什么
+
+`ubuntu-base` 是**最小系统**，只有 bash、apt、coreutils 这些。**没有 systemd、没有 udev、没有桌面**。
+
+所以阶段 2 不能"解压完就直接启动"——那样启动后没有 init 会 panic。有两条路：
+
+**路线 A：先用 init=/bin/bash 启动，再补装**
+```
+cmdline: root=PARTLABEL=nuwa-root rootwait init=/bin/bash
+```
+进去后 `apt install systemd-sysv`，然后改回正常 init。
+
+**路线 B：安装时就 chroot 补装（推荐）**
+```sh
+mount --bind /dev  $MNTPOINT/dev
+mount -t proc proc $MNTPOINT/proc
+mount -t sysfs sysfs $MNTPOINT/sys
+chroot $MNTPOINT /bin/bash
+# chroot 内：
+apt update
+apt install -y systemd-sysv udev kmod
+apt install -y ubuntu-desktop-minimal network-manager
+```
+
+**路线 B 更好**：一次装完，第一次启动就是可用的 GNOME 系统。
+
+### 另一种选择：用预装 GNOME 的镜像
+
+如果不想在 chroot 里装几百个包，可以改用 Ubuntu 官方的 arm64 桌面镜像（2–4 GiB），
+解压后直接有 GNOME。代价是镜像大、含大量无关驱动。
+
+**当前决策**：先用 base + chroot（可控、小），如果 chroot 装包遇到问题再换桌面镜像。
