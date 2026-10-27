@@ -7,7 +7,8 @@
     .\tools\flash-uefi.ps1 -Mode vendor -Nodrm   # UEFI + esp-nuwa-nodrm.img -> vendor_boot_a
     .\tools\flash-uefi.ps1 -Efifb                # 本地 efifb 版 -> vendor_boot_a
     .\tools\flash-uefi.ps1 -BootB -Efifb         # 本地 efifb 版 -> boot_b (4KiB FAT16)
-    .\tools\flash-uefi.ps1 -Initrd               # FAT 放进 vendor ramdisk -> vendor_boot_a（不依赖 UFS）
+    .\tools\flash-uefi.ps1 -Initrd               # FAT 放进 vendor ramdisk -> vendor_boot_a
+    .\tools\flash-uefi.ps1 -Min                  # 最小诊断镜像 -> boot_b（只打一行 + 重启）
     .\tools\flash-uefi.ps1 -Debug          # 刷 UEFI DEBUG 版到 boot_a
 #>
 param(
@@ -16,6 +17,7 @@ param(
   [switch]$Nodrm,
   [switch]$Efifb,
   [switch]$Initrd,
+  [switch]$Min,
   [switch]$Debug,
   [int]$WatchSeconds = 90,
   [string]$Other = "C:\Users\L1872\Documents\nuwa ubt\other",
@@ -34,7 +36,9 @@ if ($fb -notmatch "fastboot") {
 $uefi = if ($Debug) { Join-Path $Other "uefi-nuwa-debug\Mu-nuwa.img" } else { Join-Path $Other "uefi-nuwa\Mu-nuwa.img" }
 
 # 选 payload
-if ($Initrd) {
+if ($Min) {
+  $payload = Join-Path $Other "payload-bootb-min.img"; $part = "boot_b"
+} elseif ($Initrd) {
   $payload = Join-Path $Other "vendor_boot-initrd-esp.img"; $part = "vendor_boot_a"
 } elseif ($BootB -and $Efifb) {
   $payload = Join-Path $Other "payload-bootb-efifb.img"; $part = "boot_b"
