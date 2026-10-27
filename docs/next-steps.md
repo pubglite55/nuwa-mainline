@@ -58,6 +58,25 @@ Get-FileHash "other\payload-bootb-efifb.img" -Algorithm SHA256
   adb shell sh /tmp/twrp-install-esp.sh --set-esp-type
   ```
 
+## 第 2.5 步：分层诊断（黑屏时最有用的手段）
+
+如果首选路径黑屏、但又不确定卡在哪一层，刷**最小诊断镜像**：
+
+```powershell
+.\tools\flash-uefi.ps1 -Min
+```
+
+它的 init 只做三件事：挂载 proc/sys/dev → 往 kmsg 写一行 `nuwa-min: start <uptime>` → sleep 120 后重启。
+
+| 最小版表现 | 说明 | 下一步 |
+|---|---|---|
+| 屏幕出现 `nuwa-min: start` | 内核启动成功、initramfs 正常、**问题在完整 init 的某个环节** | 逐个功能排查（USB / applet / telnetd） |
+| 屏幕有内核日志但没有 `nuwa-min` | 内核起来了但 initramfs 或 /init 有问题 | 检查 initramfs 打包 |
+| 屏幕完全黑但背光亮 | 内核没起来或显示没继承 | 走第 3 步换 nodrm |
+| 完全无反应 | UEFI 没加载内核 | 走第 4 步 |
+
+**这个分层能把"不知道卡在哪"变成"卡在某一层"，是最省时间的诊断方式。**
+
 ## 第 3 步：黑屏但有背光
 
 换 nodrm 版（已内建 efifb/simpledrm，带 `clk_ignore_unused pd_ignore_unused`）：
