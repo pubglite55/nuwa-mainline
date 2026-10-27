@@ -1,6 +1,6 @@
 # 产物哈希清单
 
-> 生成时间：2026-10-28 04:57（含 fbcon=rotate:1）
+> 生成时间：2026-10-28 05:09（含 fbcon=rotate:1）
 
 用途：刷机前核对，确认刷入的正是验证过的那一份。
 
@@ -10,7 +10,7 @@
 | esp-nuwa-nodrm.img | 64 | 0c54bfc4001f918643e17cbe933d94e7eec93b9e4c37c4326b1e3cd7537399b7 |
 | esp-nuwa.img | 64 | 7499c48d8db5e3db3529d27215f51cbf5d34f439840934b0eb1e2954076c8fde |
 | esp-refind.img | 64 | 947e2818b0a2c6c36cc693215d6decd1c43ceb5bc1e1883a8482318f709d14e5 |
-| esp-shell.img | 64 | c1504384c9e0d0aa2d9daf8035eed5742fd4a3847f4776a0ee8d308cea5e9fdc |
+| esp-shell.img | 64 | 062b3430714bb60c8e66b5d557b44236d373051084a9c658bd4f553c335a9238 |
 | payload-bootb-efifb.img | 192 | 9ef12b40051510ba1418c0bef581db46ee46f80341dbe790562993ff602fd3c9 |
 | payload-bootb-min.img | 192 | 377968a2228dd86450d9b2a85d5843ae261db720f9c85849e7e56efcc6a271ba |
 | payload-bootb.img | 192 | d27978357dbfa9608eb77a5a94447e6bedccfb939b7af894c929ff103d3cc566 |

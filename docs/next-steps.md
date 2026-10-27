@@ -47,7 +47,15 @@ Get-FileHash "other\payload-bootb-efifb.img" -Algorithm SHA256
 
 （把 Shell 诊断盘刷到 `vendor_boot_a`）
 
-- **出现 Shell 提示符** → FAT 挂载没问题，问题在配置解析 → 刷 UEFI DEBUG 版看日志：
+- **出现 Shell 提示符** → FAT 挂载没问题，问题在配置解析。
+  `esp-shell.img` 里带了 `startup.nsh`，Shell 启动后会自动：
+  1. `map -r` 列出所有卷
+  2. 遍历 `fs0`–`fs7` 找 `\Linux\BOOTAA64.EFI`
+  3. 找到就**自动启动内核**
+  4. 找不到就列出所有卷的 `\EFI` 目录（诊断用）
+
+  如果自动启动成功，说明**内核和 FAT 都没问题，只是 UniXNU 没读到配置**。
+  这时再刷 UEFI DEBUG 版看卷扫描日志：
   ```powershell
   .\tools\flash-uefi.ps1 -Debug
   ```
