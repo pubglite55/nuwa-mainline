@@ -1292,3 +1292,74 @@ adb shell sh /tmp/read-bootlog.sh
 | 全零 | boot_b 没被识别为 payload（检查 OEM 标签） |
 
 **这是继 pstore 之后的第二个"事后取证"通道**，而且不依赖内核是否活着。
+
+
+## ★ 第二十三轮：官方支持状态表（重要验证）
+
+来源：`uefi-nuwa/Status.md`（Project Silicium 维护）
+
+```
+## Xiaomi 13 Pro
+State: Inactive
+Codename: nuwa
+Contributors: Robotix, Alfa
+```
+
+### UEFI Status
+
+| Feature | State |
+|---|---|
+| Display | ✅ |
+| Internal Storage | ✅ |
+| Side Buttons | ✅ |
+| USB Host Mode | ❌ |
+| **USB Device Mode** | ✅ |
+| USB Power Delivery | ❌ |
+| **Mass Storage** | ✅ |
+| Windows Boot | ❌ |
+| **Linux Boot** | ✅ |
+
+### OS Status（Linux）
+
+> [!IMPORTANT]
+> Linux Requires: [Mainline Kernel](https://github.com/alfaonyt/nuwa-mainline)
+
+| Feature | State |
+|---|---|
+| **Display** | ✅ |
+| **Internal Storage** | ✅（No UFS Deep Sleep） |
+| **Side Buttons** | ✅ |
+| GPU | ❌ |
+| Speakers | ❌ |
+| Microphone | ❌ |
+| Camera | ❌ |
+| Mobile Data | ❌ |
+| Vibration | ❌ |
+| 各类传感器 / 指纹 / NFC | ❌ |
+
+### 这份表验证了我们的每一个技术选择
+
+| 我们的选择 | 官方状态 | 结论 |
+|---|---|---|
+| 走 UEFI 路线 | **Linux Boot ✅** | 社区已验证可行 |
+| 用 `alfaonyt/nuwa-mainline` 内核 | 官方明确要求这个内核 | 一致 |
+| **nodrm（不启用 msm）** | **GPU ❌** | **完全正确** —— GPU 不可用，只能借用固件画面 |
+| NCM USB 设备模式 | **USB Device Mode ✅** | 一致 |
+| 不用 USB Host / WinPE | USB Host ❌ / Windows Boot ❌ | 之前判断正确 |
+| 不用 UFS 深度睡眠 | 官方特别标注 "No UFS Deep Sleep" | 社区内核已有该补丁（`cc09da1a HACK: Disable UFS deep sleep`） |
+
+### 需要下调期望的部分
+
+**首版范围要按这份表调整**：
+
+| v1 原计划 | 官方状态 | 现实 |
+|---|---|---|
+| 启动 | ✅ | 可行 |
+| 显示 | ✅ | 可行（借用固件画面） |
+| 触控 | 表里没列，但 Side Buttons ✅ 说明输入子系统可用 | 待验证 |
+| USB 网络 | ✅（USB Device Mode） | 可行 |
+| Wi-Fi/BT | 表里没列 | 未知 |
+| **音频** | **Speakers ❌ / Microphone ❌** | **官方认为不可用** |
+
+⇒ **音频不应作为 v1 的硬指标**。用户原本的 v1 范围包含音频，但社区状态显示扬声器和麦克风都不工作。
+这是需要向用户说明的现实约束。
