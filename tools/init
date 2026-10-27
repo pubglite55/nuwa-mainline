@@ -20,6 +20,14 @@ else
   echo "nuwa-init: bound to fallback"
 fi
 
+echo "-- busybox applet 自检 --"
+for a in ip ifconfig telnetd insmod mount mkdir ln sh cat sleep; do
+  if /bin/busybox --list 2>/dev/null | /bin/busybox grep -qx "$a"; then
+    echo "   OK   $a"
+  else
+    echo "   MISS $a"
+  fi
+done
 echo ""
 echo "=============================================="
 echo "  nuwa initramfs  |  mainline kernel + UEFI"
@@ -86,9 +94,14 @@ while [ $i -lt 20 ]; do
   i=$((i+1))
 done
 if [ -e /sys/class/net/usb0 ]; then
-  /bin/busybox ip link set usb0 up 2>/dev/null
-  /bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null
-  echo "   usb0: $(/bin/busybox ip -4 addr show usb0 2>/dev/null | /bin/busybox grep inet)"
+  if /bin/busybox ip link set usb0 up 2>/dev/null && /bin/busybox ip addr add 192.168.0.1/24 dev usb0 2>/dev/null; then
+    echo "   usb0 配置完成 (ip)"
+  elif /bin/busybox ifconfig usb0 192.168.0.1 netmask 255.255.255.0 up 2>/dev/null; then
+    echo "   usb0 配置完成 (ifconfig 兜底)"
+  else
+    echo "   !! usb0 配置失败（ip 与 ifconfig 都不可用）"
+  fi
+  echo "   usb0 状态: $(/bin/busybox ip -4 addr show usb0 2>/dev/null | /bin/busybox grep inet || /bin/busybox ifconfig usb0 2>/dev/null | /bin/busybox grep -i 'inet addr' || echo '<未知>')"
 else
   echo "   !! usb0 未出现（等待 10 秒超时）"
 fi
@@ -96,7 +109,7 @@ fi
 echo ""
 
 echo "-- 网络接口 --"
-/bin/busybox ip -4 addr show 2>/dev/null | /bin/busybox grep -E "^[0-9]|inet"
+if /bin/busybox ip -4 addr show 2>&1 | /bin/busybox grep -E "^[0-9]|inet"; then :; else echo "   !! ip 命令不可用或无网卡"; fi
 echo ""
 echo "=== 系统就绪：可 telnet 192.168.0.1 ==="
 echo "=== 120 秒后自动重启 ==="

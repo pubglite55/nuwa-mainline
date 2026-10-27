@@ -961,3 +961,56 @@ QEMU 没有 dwc3，所以 `usb0 未出现` 是**正确行为**——检测逻辑
 | 只改 init | **30 秒**（重打包 initramfs + 重链接） |
 
 所有镜像已用这个版本的 init 重建。
+
+
+## 第十八轮：busybox applet 完整性确认
+
+### 一个差点误判的检查
+
+用 `strings busybox | grep -qx "ip"` 检查 applet，结果 **ip / ln / sh / cat / tr 全部 MISS**，
+看起来像 busybox 是精简版。**这是错的**——短字符串在二进制里匹配不可靠。
+
+### 正确的做法：在目标环境里跑 `busybox --list`
+
+在 initramfs 里加自检段：
+
+```sh
+echo "-- busybox applet 自检 --"
+for a in ip ifconfig telnetd insmod mount mkdir ln sh cat sleep; do
+  if /bin/busybox --list 2>/dev/null | /bin/busybox grep -qx "$a"; then
+    echo "   OK   $a"
+  else
+    echo "   MISS $a"
+  fi
+done
+```
+
+QEMU 实测结果：
+
+```
+[18.921411]    OK   ip
+[18.972821]    OK   ifconfig
+[19.026533]    OK   telnetd
+[19.049667]    OK   insmod
+[19.070030]    OK   mount
+[19.093954]    OK   mkdir
+[19.225785]    OK   ln
+[19.246383]    OK   sh
+```
+
+**全部存在** ✓ Ubuntu ports 的 `busybox-static` 是全功能版本。
+
+### 顺带解释了一个"假故障"
+
+之前 QEMU 日志里出现 `!! ip 命令不可用或无网卡`，看起来像 applet 缺失。
+实际上 **QEMU 的 `-M virt` 没有网卡**，`ip -4 addr show` 对不存在的接口返回非零。
+真机上 `usb0` 出现后 `ip` 会正常工作。
+
+### init 现在的兜底链
+
+| 步骤 | 主路径 | 兜底 |
+|---|---|---|
+| 输出 | `/dev/kmsg`（屏幕 + dmesg 双可见） | `/dev/tty0` → `/dev/console` → `/dev/ttyAMA0` |
+| 网卡配置 | `ip link set` + `ip addr add` | `ifconfig usb0 192.168.0.1 netmask 255.255.255.0 up` |
+| 网卡状态 | `ip -4 addr show` | `ifconfig usb0` 的 `inet addr` 行 |
+| 诊断 | 失败时打印 `dwc3|udc|phy.*usb` 的 dmesg | — |
