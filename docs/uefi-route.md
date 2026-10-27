@@ -1363,3 +1363,40 @@ Contributors: Robotix, Alfa
 
 ⇒ **音频不应作为 v1 的硬指标**。用户原本的 v1 范围包含音频，但社区状态显示扬声器和麦克风都不工作。
 这是需要向用户说明的现实约束。
+
+
+## 第二十四轮：UniXNU 的启动实现（确认我们的配置正确）
+
+`package/UniXNUPkg/Library/UniXNULib/Boot.c`：
+
+```c
+// efi and linux: a Linux kernel with the EFI stub is an EFI image whose
+Path = UniXNUResolveImagePath (Entry->Volume, Entry->Path);
+Image = NULL;
+Status = gBS->LoadImage (FALSE, ImageHandle, Path, NULL, 0, &Image);
+...
+Status = gBS->StartImage (Image, &ExitDataSize, &ExitData);
+```
+
+### 三条确认
+
+| # | 确认 | 对我们的意义 |
+|---|---|---|
+| 1 | `type = "efi"` 与 `type = "linux"` **走同一条路径** | 不必纠结用哪个；我们的 `efi` 正确 |
+| 2 | `LoadImage` 的 `LoadOptions = NULL`、长度 0 | **内核收到空 cmdline** → 必须靠 `CONFIG_CMDLINE` 内建（我们已做） |
+| 3 | 路径经 `UniXNUResolveImagePath (Entry->Volume, Entry->Path)` | 绝对路径 `\\EFI\\BOOT\\BOOTAA64.EFI` 可解析 |
+
+### 这排除了一整类怀疑
+
+之前担心过"是不是 entry type 写错"、"是不是 cmdline 没传进去"——
+现在确认：**type 怎么写都一样，cmdline 本来就不会传**。所以：
+
+- 内核必须自带 cmdline ✓（`CONFIG_CMDLINE="console=tty0 ignore_loglevel loglevel=7 keep_bootcon clk_ignore_unused pd_ignore_unused"`）
+- 内核必须自带 initramfs ✓（`CONFIG_INITRAMFS_SOURCE`）
+- 内核必须自己找 dtb ✓（EFI 配置表里的 FdtBlob，由 `DtPlatformDxe` 提供）
+
+### 剩下唯一的未知
+
+**卷能否被 FatDxe 挂载** —— 这是整条链路上唯一还没验证的环节。
+其余每一步（BootShim 复制 FD、UEFI 启动、UniXNU 加载配置、LoadImage、内核 EFI stub、initramfs 解压、/init 执行）
+都已有代码级或 QEMU 级的证据。
