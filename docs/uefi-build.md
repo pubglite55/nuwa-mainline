@@ -282,3 +282,86 @@ export PATH="$HOME/tools/usr/bin:$PATH"
 
 这样 QEMU 和 AAVMF 都回来了（`~/tools/usr/bin/qemu-system-aarch64`、
 `~/tools/usr/share/AAVMF/`）。
+
+
+## 13. 为什么不能靠 pstore 抓黑屏时的 panic（2026-10-29 分析，结论：不可行）
+
+思路本来是：内核 panic 时写 ramoops，重启进 Android 后
+`cat /sys/fs/pstore/console-ramoops-0` 就能看到日志。
+
+内核配置其实是齐的：
+
+```
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_COMPRESS=y
+CONFIG_PSTORE_DEFAULT_KMSG_BYTES=10240
+```
+
+但卡在两个地方。
+
+### 13.1 我们 DTS 里没有 ramoops 节点
+
+`sm8550-xiaomi-nuwa.dts` 里搜不到 `ramoops`，所以 pstore 后端不会注册。
+
+### 13.2 Android 的 ramoops 地址不能用
+
+Android 的 `vendor-dtb.dts` 里确实有：
+
+```dts
+ramoops_region {
+    compatible = "ramoops";
+    alloc-ranges = <0x00 0x00 0xffffffff 0xffffffff>;
+    mem-type = <0x02>;
+};
+```
+
+这是**动态分配**（`alloc-ranges`），实际地址由 Android 内核决定，我们猜不到。
+
+而 runtime FDT 里那个固定地址的节点：
+
+```dts
+ramoops@0xa7000000 {
+    compatible = "ramoops";
+    reg = <0x00 0xa7000000 0x00 0x400000>;   // 4 MB
+    console-size = <0x200000>;
+    pmsg-size = <0x200000>;
+};
+```
+
+**地址直接和 BootShim 撞车**。看 UEFI 的 memory map：
+
+```
+{"FD Reserved",       0xA7000000, 0x00100000, ...}
+{"UEFI FD",           0xA7100000, 0x00300000, ...}   ← BootShim 的 FD_BASE/FD_SIZE
+{"UEFI FD Reserved",  0xA7400000, 0x00200000, ...}
+```
+
+`BootShim.S` 编译参数就是 `-DFD_BASE=0xa7100000 -DFD_SIZE=0x300000`，
+即 `0xA7100000`–`0xA7400000`。而 4 MB 的 ramoops 占 `0xA7000000`–`0xA7400000`，
+**整段覆盖 BootShim 的 DTB 缓冲区**。
+
+### 13.3 换到安全地址也没用
+
+`UEFI FD Reserved`（`0xA7400000`，2 MB）之后是空的，可以放 ramoops。
+但关键问题不在地址安全，而在**谁来读**：
+
+- 我们写进去的 panic 日志，只有**我们自己**（下次启动的 Linux）能读
+- Android 的 ramoops 驱动只认它自己 DT 里那个动态分配的地址
+- 两块内存不同 → **Android 读不到我们的 pstore**
+
+而当前的问题恰恰是「内核起不来」，所以「下次启动的 Linux」根本不存在。
+
+**结论**：pstore 只能解决「内核起来了但用户态有问题」的场景，
+对「内核早期 panic + 无串口 + 屏幕黑」完全无解。
+
+**能用的手段只剩屏幕本身**：
+1. `GopInfo.efi` —— 查 GOP 真实类型（不依赖内核）
+2. `earlycon=efifb` —— 内核最早阶段直接画字到 framebuffer
+3. `SimpleFbDxe` / 双驱动固件 —— 保证 framebuffer 有效
+
+### 13.4 唯一还能补的通道
+
+真机要拿串口，必须拆机接 UART（见 `uart-plan.md`）。在那之前，
+**任何「内核早期崩溃」都只能靠屏幕和 USB 枚举状态来推断**。
