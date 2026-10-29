@@ -365,3 +365,87 @@ ramoops@0xa7000000 {
 
 真机要拿串口，必须拆机接 UART（见 `uart-plan.md`）。在那之前，
 **任何「内核早期崩溃」都只能靠屏幕和 USB 枚举状态来推断**。
+
+
+## 14. UniXNU 自带的 breadcrumb 诊断机制（重要发现，2026-10-29）
+
+读 `UniXNUPkg/Library/UniXNULib/Main.c` 时发现，UniXNU **本来就有**一套
+为 nuwa 定制的内核进度记录机制，而且会**直接显示在菜单上**。
+
+### 14.1 它读什么
+
+```c
+volatile UINT64 *N = (volatile UINT64 *)(UINTN)0x8d3003000ULL;
+if (N[0] == 0x4e4f5445ULL) {          // magic 'NOTE'
+    UINT32 StartCkpt = (UINT32)N[2];  // start.s checkpoint
+    UINT32 Stages    = (UINT32)N[1];  // arm_init stage mask
+    ...
+}
+```
+
+字段含义：
+
+| 偏移 | 内容 |
+|---|---|
+| `N[0]` | magic `0x4e4f5445`（"NOTE"） |
+| `N[1]` | `arm_init` 阶段位图（`sweet_early_mark`） |
+| `N[2]` | `start.s` checkpoint |
+| `N[3]` | 内核被进入时的 `SCTLR_EL1` |
+| `N[4]` | 物理入口点 |
+| `N[5]` | load address |
+
+`N[2]` 的取值是关键：
+
+| 值 | 含义 |
+|---|---|
+| 0 | 从未进入 `start_first_cpu`（EFI stub 之后就没了） |
+| 1 | 进入内核入口 |
+| 3 | 读完 boot args |
+| 5 | 建好 bootstrap 页表 |
+| 6 | MMU 已启用 |
+
+### 14.2 它显示在哪
+
+```c
+Print (L"UNIXNU: note %lx %lx %lx %lx  (magic %lx)\n", N[0], N[1], N[2], N[3], 0x4e4f5445ULL);
+...
+UnicodeSPrint (Ui.Notice, ..., L"last kernel boot reached stage mask 0x%x", KernelStages);
+// 或者
+UnicodeSPrint (Ui.Notice, ..., L"no kernel stage bars found (kernel died before arm_init)");
+UnicodeSPrint (Ui.Info, ..., L"n1 %x ck %x ld %x sc %x ent %x", N[1], N[2], N[5], N[3], N[4]);
+```
+
+**也就是说：UEFI 菜单上本来就有这几行**，不需要额外操作就能看到上次内核死在哪。
+下次真机测试时**第一件事就是看这几行**。
+
+### 14.3 但我们的内核不会写它
+
+`sweet_early.c` / `NUWA_BREADCRUMB` 是上游的 nuwa 定制补丁，我们的
+`~/nuwa/linux` 里**没有**（`find -name "sweet_early*"` 为空）。
+所以现在菜单只会显示 `no kernel stage bars found`。
+
+要让它有意义，得把 breadcrumb 写进我们的内核：
+- `arch/arm64/kernel/head.S` 的 `start_first_cpu` 开头写 `N[0]=magic, N[2]=1`
+- 读完 boot args 写 `N[2]=3`
+- 建完页表写 `N[2]=5`
+- 开 MMU 后写 `N[2]=6`
+- `N[3]/N[4]` 记录进入时的 `SCTLR_EL1` 和入口点
+
+### 14.4 地址疑点（移植前必须确认）
+
+`0x8d3003000` ≈ **35.3 GiB**，而 SM8550 的 DRAM 最多 16 GB，
+物理上不可能存在这个地址。
+
+可是 UniXNU **每次启动都读它**（`Print (L"UNIXNU: note ...")`），
+而真机上菜单能正常显示——说明这个读操作没有触发异常。
+
+两种可能：
+1. 固件的 MMU 把未映射区域指向了某个默认页（读得到垃圾但不崩）
+2. 这个地址在 nuwa 上有特殊映射
+
+**在确认可写之前，绝对不能在内核里往这里写**——如果是无效地址，
+写操作会立即触发数据中止，比现在的黑屏更糟。
+
+**验证办法（下次真机时）**：看菜单上 `UNIXNU: note` 那行四个值。
+- 全是 `0` 且 magic 显示 `4e4f5445` → 地址可读但没人写过
+- 出现非零值 → 有人写过，地址有效
