@@ -183,3 +183,102 @@ make: [...SimpleFbDxe.efi] Error 1 (ignored)
 **风险**：如果 ABL 在交出控制权时已经关闭了显示，SimpleFbDxe 复用的那块 framebuffer
 可能无效，导致**连 UEFI 界面都不显示**。所以刷之前必须保留 DisplayDxe 版
 （`other/uefi-nuwa/Mu-nuwa.img`）作为回退。
+
+
+## 9. 三个固件版本（2026-10-29 构建）
+
+| 目录 | 大小 | SHA256 前 16 | 显示驱动 | 用途 |
+|---|---|---|---|---|
+| `uefi-nuwa/` | 2,127,872 | `5c60f2f021bc75c5` | DisplayDxe | 原版，界面确认可用（回退用） |
+| `uefi-nuwa-debug/` | 2,248,704 | `b9b2b0690bf7b86a` | DisplayDxe | DEBUG 版，界面可用 |
+| `uefi-nuwa-simplefb/` | 1,998,848 | `aa29361e23a37532` | 仅 SimpleFbDxe | 纯线性 GOP，但面板可能不亮 |
+| `uefi-nuwa-dual/` | 2,113,536 | `331608b615e86d6e` | **DisplayDxe + SimpleFbDxe** | **首选** |
+
+### 为什么做"双驱动"版
+
+`DisplayDxe` 和 `SimpleFbDxe` 的职责完全不同：
+
+| | DisplayDxe | SimpleFbDxe |
+|---|---|---|
+| 面板初始化 | 完整（DSI/DSC/PMIC/背光） | **不做** |
+| framebuffer 来源 | 自己初始化 | 复用 `"Display Reserved"` carveout（`0xB8000000`，44 MB） |
+| GOP 类型 | 可能 BLT-only | 标准线性 |
+
+只留 `SimpleFbDxe` 的风险：如果 ABL 交出控制权时已关屏，**连 UEFI 界面都没有**。
+
+双驱动版让两者共存，靠内核 EFI stub 的选择逻辑天然分工：
+
+```c
+/* drivers/firmware/efi/libstub/gop.c:450 */
+if (info->pixel_format == PIXEL_BLT_ONLY || ...)
+    continue;                    // DisplayDxe 的 GOP 被跳过
+...
+if (handle has ConOut) return;   // 否则选第一个可用的
+```
+
+- **UEFI 界面**：GraphicsConsoleDxe 用 DisplayDxe 的 BLT 画字 → 界面正常
+- **内核 efifb**：跳过 BLT-only，选中 SimpleFbDxe 的线性 GOP → framebuffer 可用
+
+### 必须同时保留 CPRDxe
+
+`CPRDxe` 是 DisplayDxe 的硬依赖（电源轨控制），原来被包在
+`!if $(USE_CUSTOM_DISPLAY_DRIVER) == 1` 里。把开关设为 0 后它会一起被排除，
+导致 DisplayDxe 启动失败。做双驱动版时**必须把 CPRDxe 也改成无条件**：
+
+```
+# CPRDxe is a hard dependency of DisplayDxe (power rail control).
+INF Binaries/nuwa/QcomPkg/Drivers/CPRDxe/CPRDxe.inf
+INF Binaries/nuwa/QcomPkg/Drivers/DisplayDxe/DisplayDxe.inf
+INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
+```
+
+## 10. GopInfo：查真实 PixelFormat 的诊断应用
+
+位置：`Platforms/Xiaomi/nuwaPkg/Application/GopInfo/`（9,216 B，UEFI_APPLICATION）
+
+它会打印每个 GOP 的 `MaxMode`、`FrameBufferBase`、`FrameBufferSize`、
+`Resolution`、`PixelFormat`、`PixelsPerScanLine`，然后停 60 秒。
+
+关键判断：
+
+| PixelFormat | 名称 | 对 efifb 的意义 |
+|---|---|---|
+| 0 | `PixelRedGreenBlueReserved8BitPerColor` | ✅ 可用 |
+| 1 | `PixelBlueGreenRedReserved8BitPerColor` | ✅ 可用 |
+| 2 | `PixelBitMask` | 可能可用 |
+| 3 | `PixelBltOnly` | ❌ **拿不到 framebuffer** |
+
+打包进诊断 payload（`payload-bootb-diag.img`），UniXNU 菜单第一项启动它。
+**这样能在刷固件之前就确定黑屏到底是 GOP 类型问题还是内核侧问题。**
+
+## 11. QEMU 验证 GopInfo 的尝试与结论（失败）
+
+想用 QEMU + AAVMF 先验证 GopInfo 不崩，结果 **AAVMF 的 BDS 不工作**：
+
+```
+UEFI firmware (version 2025.11-3ubuntu7.3 ...)
+(qemu 卡住，不再有任何输出)
+```
+
+试过：`-bios`、`pflash CODE+VARS`、`virtio-gpu-pci`（QEMU 10.2 无此设备名）、
+`ramfb`、`bochs-display`、带 MBR 分区表的 FAT32 镜像、`startup.nsh` 自动执行——
+**全部只打印固件版本就停**。
+
+结论：**AAVMF 不适合做 EFI 应用的快速验证环境**，不要在这上面继续花时间。
+GopInfo 的正确性靠静态验证（PE 头 `0xAA64` / subsystem 10 / 代码仅用
+`LocateHandleBuffer` + `HandleProtocol` + `Print`）保证。
+
+## 12. 恢复 QEMU（免 sudo）
+
+WSL 里的 qemu 曾被清掉，但 `/var/cache/apt/archives/` 里还有 deb：
+
+```bash
+mkdir -p ~/tools
+dpkg-deb -x /var/cache/apt/archives/qemu-system-arm_*.deb  ~/tools
+dpkg-deb -x /var/cache/apt/archives/qemu-system-data_*.deb ~/tools
+dpkg-deb -x /var/cache/apt/archives/qemu-efi-aarch64_*.deb ~/tools
+export PATH="$HOME/tools/usr/bin:$PATH"
+```
+
+这样 QEMU 和 AAVMF 都回来了（`~/tools/usr/bin/qemu-system-aarch64`、
+`~/tools/usr/share/AAVMF/`）。
