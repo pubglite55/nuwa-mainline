@@ -449,3 +449,88 @@ UnicodeSPrint (Ui.Info, ..., L"n1 %x ck %x ld %x sc %x ent %x", N[1], N[2], N[5]
 **验证办法（下次真机时）**：看菜单上 `UNIXNU: note` 那行四个值。
 - 全是 `0` 且 magic 显示 `4e4f5445` → 地址可读但没人写过
 - 出现非零值 → 有人写过，地址有效
+
+
+## 15. 移植 UniXNU breadcrumb 到内核（已完成，待真机验证）
+
+### 15.1 先解决了地址疑点
+
+`0x8d3003000` ≈ 35.3 GiB，看着超出 DRAM。查 runtime FDT 的 `memory` 节点才发现
+**nuwa 的地址空间跨了 4 GB 边界**（`ddr_size = 0x0c` = 12 GB）：
+
+```
+0x80000000  + 0x00e00000     (2.0 ~ 2.0 GB)
+0x811d0000  + 0x56e30000     (2.0 ~ 3.4 GB)
+0xd8140000  + 0x00020000
+0xe7cb0000  + 0x18350000     (3.6 ~ 4.0 GB)
+0x880000000 + 0x39d00000     (34.0 ~ 34.9 GB)
+0x8c0000000 + 0xc0000000     (35.2 ~ 38.2 GB)
+0x980000000 + 0x180000000    (38.0 ~ 44.0 GB)
+0x8b9f0000  + 0x01e00000     (34.9 ~ 35.5 GB)   ← 31.5 MB, 0x8d3003000 在这里
+```
+
+**地址有效**，可以安全写。
+
+### 15.2 head.S 的三个检查点
+
+`arch/arm64/kernel/head.S` 的 `primary_entry` 里插入。选寄存器前先确认
+`primary_entry` 只用到 x0/x1/x2/x19/x20/x29，**x22–x28 全空闲**；
+且 `record_mmu_state()` 返回时 MMU 已被禁用，可以直接物理寻址。
+
+| 位置 | checkpoint |
+|---|---|
+| `record_mmu_state` 之后 | **1** — 进入内核入口 |
+| `preserve_boot_args` 之后 | **3** — boot args 已保存 |
+| `__pi_create_init_idmap` 之后 | **5** — bootstrap 页表已建 |
+
+每处都是这段（只碰 x26/x27/x28，不破坏 x0 返回值和 x19 的 MMU 状态）：
+
+```asm
+	movz	x28, #0x0008, lsl #32
+	movk	x28, #0xd300, lsl #16
+	movk	x28, #0x3000
+	movz	x27, #0x4e4f, lsl #16
+	movk	x27, #0x5445
+	str	x27, [x28]			// N[0] = 'NOTE'
+	mov	x26, #<ckpt>
+	str	x26, [x28, #16]		// N[2] = checkpoint
+```
+
+### 15.3 checkpoint 6 放在 C 代码里
+
+MMU 开启后必须用虚拟地址。放在 `init/main.c` 的 `setup_arch()` 之后
+（那时 `memstart_addr` 已设置，`__va()` 才有效）：
+
+```c
+	setup_arch(&command_line);
+
+	{
+		volatile u64 *nuwa_note = (volatile u64 *)__va(0x8d3003000ULL);
+		nuwa_note[2] = 6;
+	}
+```
+
+编译后是运行时计算（`sub x0, x0, PHYS_OFFSET` + `orr ..., #0xfff0000000000000`），
+**所以搜 `0x8d3003000` 常量是找不到的**，别以为没编进去。
+
+### 15.4 判读表（下次真机测试用）
+
+刷 `payload-bootb-bc.img` 到 `boot_b`，重启进 UEFI，看菜单的
+`UNIXNU: note <magic> <stages> <ckpt> <sctlr>`：
+
+| `note` 显示 | 内核走到哪 | 排查方向 |
+|---|---|---|
+| 无此行 / magic ≠ `4e4f5445` | **没进内核入口** | EFI stub、UniXNU 的 LoadImage/StartImage、PE 装载 |
+| `4e4f5445 0 1 ...` | 入口后、`preserve_boot_args` 或建页表时挂 | 早期栈、`__pi_create_init_idmap` |
+| `4e4f5445 0 3 ...` | 读到 boot args，建页表时挂 | idmap 页表构造 |
+| `4e4f5445 0 5 ...` | 页表建好，`__cpu_setup`/开 MMU 时挂 | CPU 特性、TCR/MAIR 配置 |
+| `4e4f5445 0 6 ...` | MMU 已开、`setup_arch` 完成 | `start_kernel` 之后（驱动/init） |
+
+### 15.5 一个已知限制
+
+内核 DTS 里加的 `nuwa-note-region` 保留声明**对真机无效**——真机启动时 DT 来自
+UEFI 打包的 `sm8550-xiaomi-nuwa.dtb`（`nuwa.fdf` 里 `SECTION RAW`），不是内核自带的 dtb。
+要真正保留这块内存，得改 UEFI 那个 dtb 并重编固件。
+
+不过**不影响早期诊断**：breadcrumb 写在 `head.S` 最早期，那时还没分配任何内存。
+只有"内核完全启动成功"之后才可能被覆盖——而那种情况本来也不需要诊断。
