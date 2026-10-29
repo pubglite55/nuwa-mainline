@@ -129,3 +129,41 @@
 | 5 | TD-04 OEM 标签 | 只影响诊断能力 |
 | 6 | TD-07 无线/音频 | 独立子任务，工作量最大 |
 | 7 | TD-06 reboot 同步 | 产品化阶段才需要 |
+
+## 排查记录：黑屏前的配置审查（2026-10-29，结论：配置层无明显问题）
+
+真机黑屏 + USB 不枚举，在等 breadcrumb 结果期间做了一轮系统性配置审查，
+把"配置错了"这个可能性排除掉。
+
+| 检查项 | 结果 | 说明 |
+|---|---|---|
+| UFS 控制器 | ✅ `status = "okay"` | `&ufs_mem_hc` / `&ufs_mem_phy` 都启用，电源轨完整（vcc/vccq/vdd-hba/vdda-phy/vdda-pll） |
+| arm64 errata | ✅ 20+ 项已启用 | `ARM64_ERRATUM_826319/819472/.../2067961` 都在 |
+| GIC | ✅ 完整 | `ARM_GIC` + `ARM_GIC_V3` + `ARM_GIC_V3_ITS` + `ARM_GIC_V5` |
+| VA/PA 位宽 | ✅ 合理 | `VA_BITS=52`/`PA_BITS=52`，但 `__cpu_setup` 用 `VA_BITS_MIN`(48) 初始化 TCR，运行时按硬件能力调整 |
+| TLB range / BTI / MTE / SVE | ✅ 硬件支持 | SM8550 是 ARMv9，这些特性都有 |
+| PSCI | ✅ 存在 | DT 里 `enable-method = "psci"`（3 个 cluster 都有） |
+| KASLR | ✅ 已禁用 | DT `kaslr-seed = <0x00 0x00>` |
+| initrd | ✅ 用内嵌的 | toml 没配 `initrd` 字段 → UniXNU 不发布 LoadFile2 initrd → 内核用内嵌 initramfs |
+| cmdline 优先级 | ✅ 可控 | `CONFIG_CMDLINE_FORCE=y` 会跳过 DT 里 ABL 留下的 `console=ttyMSM0,115200n8` |
+
+### 三个 UEFI 侧 errata 与内核的关系
+
+UEFI 编译参数里有：
+
+```
+-D HAS_ACTLR_EL1_UNIMPLEMENTED_ERRATA=1
+-D HAS_AMCNTENSET0_EL0_UNIMPLEMENTED_ERRATA=1
+-D HAS_GIC_V3_WITHOUT_IRM_FLAG_SUPPORT_ERRATA=1
+```
+
+内核里没有对应的 `CONFIG_ARM64_ERRATUM_*`，但**不影响启动**：
+
+- `ACTLR_EL1` 未实现 → 内核启动路径不碰它（只有 cache/预取控制用）
+- `AMCNTENSET0_EL0` 未实现 → 只影响 perf 计数器
+- `GIC_V3_WITHOUT_IRM` → 影响中断亲和路由，不影响早期启动
+
+### 结论
+
+配置层面找不到能解释"黑屏 + USB 不枚举"的问题。
+**必须靠 breadcrumb 确定内核实际死在哪一层**，见 `uefi-build.md` 第 15 节的判读表。
