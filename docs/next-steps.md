@@ -169,3 +169,121 @@ telnet 192.168.0.1
 ```
 
 进去后按 `首启检查清单`（见 `uefi-route.md`）逐项采集证据。
+
+---
+
+## 黑屏问题：设备回来后照这个做（2026-10-29 更新）
+
+### 状态
+
+真机现状：UEFI 界面正常、能扫到 `boot_b` 的 FAT 卷、能点进菜单，
+但点启动后**黑屏**，且 **USB 完全不枚举**。
+
+已排除：
+- 卷没被扫到（能扫到）
+- 配置文件没读到（菜单能列出来）
+- PE 装载失败（UniXNU 的 `StartImage` 没返回，说明内核确实开始跑了）
+
+未确定：GOP 是 BLT-only 还是线性；内核死在哪一层。
+
+### 第 0 步：前置检查
+
+```powershell
+# 电量必须 > 40%（低于此值黑屏/随机复位，见 troubleshooting.md）
+fastboot getvar battery-voltage
+```
+
+### 第 1 步：刷入（boot_a 固件 + boot_b 内核）
+
+```powershell
+# 固件：双显示驱动 + dtb 保留 breadcrumb 内存
+fastboot flash boot_a "other\uefi-nuwa-final\Mu-nuwa.img"
+
+# 内核：4 个检查点
+fastboot flash boot_b "other\payload-bootb-bc.img"
+
+fastboot reboot
+```
+
+**注意**：`vendor_boot_a/b` 全程不碰（用户硬约束）。
+
+### 第 2 步：读 breadcrumb（最关键）
+
+进 UEFI 后**先别点启动**，看菜单上的这几行：
+
+```
+UNIXNU: note <a> <b> <c> <d>  (magic 4e4f5445)
+last kernel boot reached stage mask 0x...
+n1 ... ck ... ld ... sc ... ent ...
+```
+
+把 `<a> <b> <c> <d>` 和 `stage mask` 记下来。
+
+**判读**（`<c>` 就是 checkpoint，即 `N[2]`）：
+
+| `note` 的第三个数 | 内核走到哪 | 下一步 |
+|---|---|---|
+| magic 不是 `4e4f5445` | 没进内核入口 | 查 EFI stub / `StartImage`；见下方"分支 A" |
+| `1` | 入口后、保存 boot args 或建页表时挂 | 分支 B |
+| `3` | 读到 boot args，建页表时挂 | 分支 B |
+| `5` | 页表建好，CPU setup / 开 MMU 时挂 | 分支 C |
+| `6` | MMU 开了、`setup_arch` 完成 | 分支 D |
+
+### 分支 A：magic 不对（内核没进入口）
+
+说明 `LoadImage` 之后 `StartImage` 立即失败，或 PE 装载有问题。
+
+```powershell
+# 换诊断 payload，看 GOP 和 breadcrumb 地址
+fastboot flash boot_b "other\payload-bootb-diag.img"
+fastboot reboot
+```
+
+点 "GOP + breadcrumb probe"，拍照。重点看：
+- `PixelFormat` 是几（3 = BLT-ONLY）
+- `BREADCRUMB 0x8d3003000` 那节是否显示 "In memory map"
+
+### 分支 B：ck=1 或 3（早期汇编阶段）
+
+问题在 `head.S` 或页表构造。检查方向：
+- `CONFIG_ARM64_VA_BITS_52` / `PA_BITS_52` 是否真的被硬件支持
+- `CONFIG_ARM64_4K_PAGES` 与 UEFI 的页大小是否一致
+- `__pi_create_init_idmap` 的页表大小是否够
+
+### 分支 C：ck=5（CPU setup / MMU）
+
+问题在 `__cpu_setup` / `__enable_mmu` / TCR/MAIR 配置。
+
+### 分支 D：ck=6（start_kernel 之后）
+
+内核主体起来了，问题在驱动或 init。这时候：
+- 屏幕应该有 `earlycon=efifb` 的输出（如果没有，说明 efifb 还是没拿到 framebuffer）
+- USB 应该枚举（如果没枚举，查 `dwc3` / `usb_1` 节点）
+
+### 回退（任何一步出问题）
+
+```powershell
+.\public\nuwa\tools\device-recover.ps1
+```
+
+或者手工：
+
+```
+fastboot flash boot_a   backup\nuwa-backup\boot_a.img
+fastboot flash boot_b   backup\nuwa-backup\boot_b.img
+fastboot flash init_boot_a backup\nuwa-backup\init_boot_a.img
+fastboot flash vendor_boot_a backup\nuwa-backup\vendor_boot_a.img
+fastboot set_active a
+fastboot reboot
+```
+
+### 备选镜像
+
+| 场景 | 镜像 |
+|---|---|
+| 固件回退（DisplayDxe 原版） | `other\uefi-nuwa\Mu-nuwa.img` |
+| 只想要线性 GOP | `other\uefi-nuwa-simplefb\Mu-nuwa.img` |
+| 双驱动但无 dtb 保留 | `other\uefi-nuwa-dual\Mu-nuwa.img` |
+| 诊断 GOP 类型 | `other\payload-bootb-diag.img` |
+| 判断是否 framebuffer 导致崩溃 | `other\payload-bootb-noconsole.img` |
+| 基线（earlycon + console） | `other\payload-bootb-efifb.img` |
