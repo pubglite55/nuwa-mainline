@@ -181,13 +181,15 @@ unpack_bootimg --boot_img /tmp/abl-nuwa.img --out /tmp/ub   # 回读校验 heade
 
 | 文件 | 大小 | sha256 |
 |---|---|---|
-| `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339` |
-| `other/abl-nuwa-drm-v3.img` | 17,854,464 | `8af2181d887ab6defcdca48fff6f85366c4c01dd819c15a5a4a9813b6929ff27` |
-| `other/abl-nuwa-drm-v2.img` / `-v1.img` | 17,854,464 | 早期版本（reset 极性 / 序列延时未修），**不要用** |
+| **`other/abl-nuwa-drm-v6.img`** | **17,858,560** | **`d7ba3eff2dddd735b8fad8658247486c51e7089f4c2c46093e09c75e0636e0ce`（当前，刷这个）** |
+| `other/abl-nuwa-drm-v5.img` | 17,854,464 | `91f2d68f…`（dispcc 已内建，缺面板 off 序列） |
+| `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7…`（**dispcc 还是模块，会静默黑屏**） |
+| `other/abl-nuwa-drm-v3.img` 及更早 | 17,854,464 | 早期版本（reset 极性 / 序列延时未修），**不要用** |
 | `other/uefi-nuwa-v7/Mu-nuwa.img` | 2,113,536 | Mu UEFI 回退用（`boot_a`）+ 诱饵 DTB 的来源 |
 
-v4 与 v3 的区别只在 initramfs（v4 是原生 DRM 版诊断脚本）。
-**v1/v2 有已知 bug：reset 极性写反、初始化序列 120 ms 延时被跳过。**
+版本演进：v1/v2 reset 极性写反 + 序列延时被跳过；v4 换成原生 DRM 版 initramfs；
+**v5 修掉最致命的一条 —— `CONFIG_SM_DISPCC_8550=m`（显示时钟控制器是模块，initramfs 环境里不会加载，
+`mdss` 只会 probe defer 到黑屏）**；v6 补上厂商关机序列（`0x28`+20 ms、`0x10`+100 ms）。
 
 ## 9. 待办（按顺序，别跳步）
 
@@ -292,6 +294,9 @@ git -c user.name=nuwa -c user.email=nuwa@localhost commit -m "<范围>: <做了�
 - ❌ 不要直接改 `drivers/gpu/drm/panel/panel-nuwa-m2.c` 里的 DSC 数值后又指望它生效 ——
   `msm` 的 `dsi_populate_dsc_params()` 会**无条件覆盖** RC 相关字段。
 - ❌ 不要为 `DRM_MSM` 配 `CONFIG_QCOM_OCMEM=m`（会把 `DRM_MSM` 拉回 `m`）。
+- ❌ 不要让显示链路的任何依赖停在 `=m`：`SM_DISPCC_8550`、`ARM_SMMU`、`INTERCONNECT_QCOM_SM8550`、
+  `QCOM_RPMHPD`、`DRM_MSM_*`、`DRM_PANEL_NUWA_M2` 必须全 `=y`。initramfs 里没有模块，缺一个就静默黑屏。
+  自查：`nm vmlinux | grep dispcc_sm8550` 应看到 `__initcall__kmod_dispcc_sm8550…`（带 `kmod_` 前缀是内建符号命名，不是模块）。
 - ❌ 不要以为内核树在 `C:\Users\L1872\Documents\nuwa ubt\public\nuwa\linux`（不在那儿）。
 
 ---

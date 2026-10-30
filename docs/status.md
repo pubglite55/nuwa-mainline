@@ -69,18 +69,26 @@ Android boot.img（header v1）`，内核字段是 `Image.gz + 厂商 DTB`，ini
 
 PPS 是用内核 `drm_dsc_pps_payload_pack()` 的字节序逐字段解码的，不是猜的。
 
-### 本次修掉的两个真 bug
+### 本次修掉的三个真 bug
 
 1. **reset 极性写反**：DTS 写 `GPIO_ACTIVE_LOW`，驱动 `set(0)→set(1)` 会把面板一直按在复位态。
    厂商 `platform-reset-gpio` 的 flags 是 `0x00`（ACTIVE_HIGH），已改为 `GPIO_ACTIVE_HIGH`。
 2. **初始化序列的延时没生效**：`send_seq()` 里原本是个空语句（`if (...) ;`），
    导致 `0x11`（sleep out）之后要求的 120 ms 被跳过。已改为 `msleep(seq[i + 4])`。
+3. **显示时钟控制器是模块**：`CONFIG_SM_DISPCC_8550=m`。initramfs 环境里没有模块可加载，
+   `mdss` 拿不到 `dispcc` 的时钟就会 probe defer 到底 —— 静默黑屏。已改为 `=y`，
+   并用 `nm vmlinux` 确认 `dispcc_sm8550_driver_init` 是内建 initcall。
+
+另外补上了厂商的关机序列（`0x28` + 20 ms，`0x10` + 100 ms），放在 `unprepare()` 里，
+否则面板断电后会残留自发光、下次初始化也可能失败。
 
 ### 产物
 
 | 文件 | 大小 | sha256 |
 |---|---|---|
-| `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339` |
+| **`other/abl-nuwa-drm-v6.img`** | **17,858,560** | **`d7ba3eff2dddd735b8fad8658247486c51e7089f4c2c46093e09c75e0636e0ce`（当前）** |
+| `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339`（dispcc 仍是模块） |
+| `other/abl-nuwa-drm-v5.img` | 17,854,464 | `91f2d68f2a34aba6d950cacf5ec2120b4fc4d0dadc24798c28780ebdf5d17445`（dispcc 已内建，缺 off 序列） |
 | `other/abl-nuwa-drm-v3.img` | 17,854,464 | `8af2181d887ab6defcdca48fff6f85366c4c01dd819c15a5a4a9813b6929ff27`（旧 initramfs） |
 
 

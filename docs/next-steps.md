@@ -26,11 +26,12 @@ Get-FileHash "backup\nuwa-backup\recovery_a.img" -Algorithm SHA256
 ```powershell
 & "C:\Android\platform-tools\fastboot.exe" devices           # 应看到 3705933  fastboot
 & "C:\Android\platform-tools\fastboot.exe" getvar battery-voltage
-& "C:\Android\platform-tools\fastboot.exe" flash recovery_a "other\abl-nuwa-drm-v4.img"
+& "C:\Android\platform-tools\fastboot.exe" flash recovery_a "other\abl-nuwa-drm-v6.img"
 & "C:\Android\platform-tools\fastboot.exe" reboot recovery
 ```
 
-`abl-nuwa-drm-v4.img` sha256 = `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339`。
+`abl-nuwa-drm-v6.img` sha256 = `d7ba3eff2dddd735b8fad8658247486c51e7089f4c2c46093e09c75e0636e0ce`。
+（v4 之前的版本有 dispcc 模块化 / reset 极性 / 序列延时问题，不要用。）
 
 ### C. 判读
 
