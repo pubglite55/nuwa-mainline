@@ -475,6 +475,31 @@ ABL 传给内核的 cmdline 里**没有 `rdinit=/init`**（我们用 `CONFIG_CMD
 **不能只按 `VID_1D6B` 判断「USB 没起来」**：先用 `Get-PnpDevice` 列出所有在位 USB（含无驱动的错误设备），
 否则会把「枚举了但没驱动」误判成「完全没枚举」。
 
+### 2026-10-30 深夜 第九轮：显示链路已编程但面板无应答
+
+#### 已确认的现象链（v19 / v20）
+
+| 检查 | 结果 | 判断 |
+|---|---|---|
+| `/sys/class/drm` | `card0`、`card0-DSI-1` | DRM 起来了 |
+| `card0-DSI-1` status/enabled/modes | connected / enabled / 1440x3200 | 连接器与模式设置成功 |
+| `crtc[103]: crtc-0` | `enable=1 active=1 plane_mask=1` | 管线完整打开 |
+| `msm_dpu` | `bound ae94000.dsi`，`lane rate 1360000000 Hz` | PHY 参数正确 |
+| 背光 `ae94000.dsi.0` | brightness/actual = 4095 | 软件状态已拉满 |
+| fbcon | 已绑定，`fb0` 1440x3200x32 | 控制台有画布 |
+| **面板 DCS 回读**（v20 加的调试） | `id=000000 (r=0,0,0)`、`get_power_mode` = **-61 (ENODATA)** | **面板不应答** |
+| PM8550 GPIO11（`display_avdd` 的使能脚） | `in low`（其余 vddio/vci/vddd = `out high`） | AVDD 没打开 |
+| `regulator_summary` 里面板四路 | 都 `enabled`，但 **0mA** | 软件“开了”，实际没供电 |
+
+结论：**DSI 主机侧一切正常，问题在面板侧的供电/复位**。面板不应答 ⇒ 界面电源（VDDI/VCI）或复位没到位。
+
+#### 待办
+
+1. 从 **Android 活的厂商 DT** 读 `panel@0` 的真实 supply 与 reset（本机写的 `display_avdd` 5.5V 是从别处照搬的，
+   厂商整树里根本没有 5.5V 稳压器节点）；
+2. 按真值改 DTB：正确的 LDO / GPIO 与极性；
+3. 再跑 v21，看 DCS 回读是否变成有效 ID（`0x38 0x0c 0x0a` 之类）。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
