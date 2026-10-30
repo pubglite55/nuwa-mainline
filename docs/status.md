@@ -192,7 +192,7 @@ Finished sshd-keygen.service - Generate sshd host keys on first boot.
 | `fastboot erase userdata` + `fastboot erase metadata`（用户要求清数据） | 均 OKAY |
 | 之后再次刷入 v9 复现同一现象 | 一致：卡第一屏、无 USB |
 
-### 根因假设（最可能，且可验证）
+### 根因：尚未确定（第一个假设已被排除）
 
 内建 DTB 的 `/memory@a0000000` 是：
 
@@ -205,7 +205,35 @@ reg = <0 0xa0000000 0 0>;      /* 尾部 size = 0 */
 内核**丢弃** ABL 传进来（已被 ABL 补好 memory）的 DTB，改用我们自己 `.incbin` 的那份 —— 于是拿到 0 字节 RAM，
 `setup_arch` 阶段就死，连 USB 都来不及初始化。
 
-这也解释了为什么 QEMU 能跑通：QEMU 提供自己的 DTB，memory 是完整的。
+> 带着**完整的 11.68 GiB / 9 bank 布局**（从原厂 dtbo 抄来的，含 `ddr_size`、`ebuff` 等属性）；
+> 那个 size=0 的 `memory@a0000000` 只是 `sm8550.dtsi` 里多出来的冗余节点，加 0 字节 bank 不会让内核没内存。
+> 实测确认：设备上 `/proc/device-tree/memory/reg` 共 144 字节 = 9 个 bank、合计 11962 MiB，
+> 与我们 DTS 里那份一致。所以**卡第一屏不是内存问题**，真正原因待查。
+
+### 现在的调试手段：pstore / ramoops
+
+真机上没有任何输出通道（无串口、USB 起不来），所以改用 **ramoops 留证**：
+
+| 项 | 值（取自设备 `/proc/device-tree/reserved-memory/ramoops@0xa7000000`） |
+|---|---|
+| 地址/大小 | `0xa7000000` / 4 MiB |
+| `console-size` | 2 MiB（`PSTORE_CONSOLE` 把内核控制台输出写进去） |
+| `pmsg-size` | 2 MiB |
+
+做法：在板级 DTS 的 `&reserved_memory` 里加同址同尺寸的 `ramoops@a7000000`，
+cmdline 追加 `panic=10 panic_on_rcu_stall=1`。这样即使屏幕不亮、USB 不枚举，
+panic 或控制台输出也会留在那块内存里；设备随后重启回 Android，Android 内核读同一块内存，
+就能从 `/sys/fs/pstore/console-ramoops-*` 取出**上一次启动的内核日志**。
+
+### 下一步
+
+1. 刷 v11（带 ramoops 与 panic 参数），启动后等它自己回到 Android；
+2. `adb shell su -c 'ls -l /sys/fs/pstore'`，读 `console-ramoops-*` 看内核最后停在哪；
+3. 若 pstore 也为空，说明内核死在 console 初始化之前，需要转串口或其它手段。
+
+### 旧的假设记录（保留，但已排除）
+
+~~内建 DTB 的 `/memory@a0000000` size=0 导致 0 RAM~~ —— 当时的推理看着成立，实测被推翻，留作教训。
 
 ### 下一步（明确、可离线完成）
 
@@ -219,6 +247,65 @@ reg = <0 0xa0000000 0 0>;      /* 尾部 size = 0 */
 - `recovery_a` 的刷写在 ABL 上**确实可行**（写进去了、也尝试启动了），路线本身没被否定；
 - 卡死时设备**不会**自己回 Android（300 秒自动重启的逻辑还没跑到 init），需要长按电源强制关机；
 - 强制关机后按“音量下 + 电源”能稳定回到 fastboot，恢复通路可用。
+
+### 2026-10-30 深夜 真机诊断第二轮（v11 + ramoops）
+
+#### 新证据
+
+| 发现 | 含义 |
+|---|---|
+| 原厂 `recovery.img` = **header v4、`kernel_size = 0`、ramdisk 80 MB、signature 4096** | 原厂 recovery 是「只有 ramdisk、没有内核」的 GKI 风格镜像；ABL 的 recovery 路径极可能从 `boot_a` 取内核 |
+| fuxi 参考项目的 `mkbootimg` 参数与我们**逐字相同**（v1、`--base 0x0`、同 offsets、`os 13.0.0/2022-11`） | 打包参数不是问题，问题在内核本身 |
+| fuxi 的镜像只有 10.3 MB，且**先做 `-min` 最小内核**打通 text console + USB，再逐个加子系统 | 我们的 17 MB 大配置里有大量内建驱动，很可能在早期就卡死 |
+| v11（带 ramoops + `panic=10 panic_on_rcu_stall=1`）启动后 2 分钟无任何 USB、也没有 panic 重启；回 Android 后 `/sys/fs/pstore` **为空** | 内核死在 pstore 初始化之前（或 ramoops 缺 `no-map` 被覆盖）→ 早期死亡 |
+
+#### 当前策略（对齐参考项目）
+
+1. **先做最小内核**：`qcom_defconfig` 为底，只留 PINCTRL_SM8550 / SM_GCC_8550 / RPMH 稳压器 / DWC3 + NCM gadget + 内建 initramfs，
+   显式关掉 UFS、DRM_MSM、SND、I2C_GENI、ATH11K、PCI、MMC —— 目标是「能起来 + USB 能枚举 + telnet 能连」。
+2. 通道打通后，按 UFS → 显示 → 触控 → USB 网络 → 无线 → 音频 的顺序逐个加回，每加一项刷一次。
+3. ramoops 同时补 `no-map`，作为每次失败的留证手段。
+
+#### 已生成的镜像
+
+| 文件 | 说明 |
+|---|---|
+| `other/abl-nuwa-drm-v10.img` | 清理了 `sm8550.dtsi` 里 size=0 的冗余 memory 节点（非根因） |
+| `other/abl-nuwa-drm-v11.img` | v10 + ramoops 预留 + `panic=10`（真机仍无输出、pstore 空） |
+| `other/abl-nuwa-min-v1.img` | **最小内核**首测镜像（构建中） |
+
+### 2026-10-30 深夜 第三轮：通读 fuxi 仓库 + 找到 USB 不枚举的真凶
+
+#### 真凶：`CONFIG_PHY_SNPS_EUSB2=m`
+
+`usb_1_hsphy`（compatible `qcom,sm8550-snps-eusb2-phy`）的驱动是 `drivers/phy/phy-snps-eusb2.c`，
+对应 `CONFIG_PHY_SNPS_EUSB2`。它之前是 **`=m`**，而 initramfs 环境不加载模块 → PHY 永不 probe
+→ dwc3 等不到 PHY，一直 defer → **没有 UDC、没有 gadget、没有任何 USB 枚举**。
+这与症状完全吻合：卡第一屏、`1D6B`/`18D1`/`05C6` 全都没有。
+
+已改为 `=y`（同时确认 `PHY_QCOM_EUSB2_REPEATER`、`PHY_QCOM_QMP_USB` 也是 `y`）。
+这是本项目第 **四** 次踩「关键依赖停在 `=m`」：`QCOM_OCMEM`、`SM_DISPCC_8550`、`DRM_MSM`、现在的 `PHY_SNPS_EUSB2`。
+
+#### 并行构建事故（已修）
+
+我在同一棵内核树里同时跑了「最小内核」和「v12」两个构建，两边互相改 `.config`：
+v12 编译失败（`kernel/bpf/core.o` 等报错），而且 `SM_DISPCC_8550` 被改回了 `=m`。
+fuxi 的脚本用 `flock` 防这个，已照学：构建脚本里加 `exec 9>.nuwa-build.lock; flock -n 9`。
+另外 `make mrproper` 会删掉 `.config`，之后又用备份覆盖回了坏配置 —— 重建前必须先确认 13 个关键项都是 `y` 再开编译。
+
+#### 从 fuxi 仓库学到的要点
+
+整理成 [reference-fuxi.md](reference-fuxi.md)。最要紧的三条：
+
+1. 打包参数与我们**逐字相同** → 打包不是问题；
+2. 他们先做 `-min` 最小内核打通「进用户空间 + USB 串口」，再按变体加子系统；
+3. **pstore/ramoops 在他们机器上跨复位不可持久**（复位清 DDR，实测失败）—— 解释了我们的 pstore 为空，
+   以后不要把 pstore 当早期日志通道。
+
+#### 待验证
+
+`other/abl-nuwa-drm-v13.img`（USB PHY 内建 + 完整显示/UFS/触控）正在构建；刷入后如果 USB 枚举出 `1D6B:0104`，
+就能 `telnet 192.168.0.1` 拿到 dmesg，从而第一次看到真机上的真实日志。
 
 ## 2026-10-29 突破：内核首次真机启动
 
