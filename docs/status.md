@@ -431,6 +431,50 @@ ABL 传给内核的 cmdline 里**没有 `rdinit=/init`**（我们用 `CONFIG_CMD
 不再依赖 ABL 传参：`CONFIG_CMDLINE_FORCE=y` + `CMDLINE="console=tty0 loglevel=8 rdinit=/init"`，
 构建 `other/abl-nuwa-rdinit-v17.img`。若 USB 出现（`1D6B:0104` / ACM / NCM），说明整条链就通了。
 
+### 2026-10-30 深夜 第八轮：★ 真机打通（USB shell + UFS + 显示栈全部起来）
+
+#### 突破点：legacy `g_cdc` 抢占 UDC
+
+`CONFIG_USB_CDC_COMPOSITE=y`（`drivers/usb/gadget/legacy/cdc2.c`，身份 `0525:A4AA`「CDC Composite: ECM + ACM」）
+是内置的 legacy gadget，**在内核初始化时就抢占了 UDC**：
+
+- 它自我申报成 `0525:A4AA`，而 Windows 没有 ECM 驱动 → 显示为「驱动安装失败」的错误设备；
+- 我们的 configfs gadget（`1d6b:0104` NCM+ACM）因此绑不上 → 看起来像「USB 完全没反应」。
+
+关掉 `CONFIG_USB_CDC_COMPOSITE` 后，`other/abl-nuwa-v18.img` 一次点亮：
+
+| 项 | 实测 |
+|---|---|
+| 枚举 | `VID_1D6B&PID_0104` → **UsbNcm Host Device + USB 串行设备 (COM5)** |
+| 内核 | `Linux (none) 7.3.0+ #17 SMP PREEMPT aarch64`（启动到 `/init` 仅 **1.09 s**） |
+| cmdline | `console=tty0 loglevel=8 rdinit=/init`（`CONFIG_CMDLINE_FORCE=y`，不再依赖 ABL 传参） |
+| gadget | `GADGET_BOUND a600000.usb` → `usb0 = 192.168.0.1/24 UP` |
+| 服务 | `TELNETD up on 192.168.0.1:23` + ACM 上的交互 shell |
+| UFS | 四个 LUN 全部枚举：`sda`(+32 分区) `sdb`(+5) `sdc`(+5) `sdd`(+5) **`sde`(+76)** `sdf`(+6) |
+
+#### 显示栈（v19）
+
+同一套修复 + 打开 DRM/DSI/panel：`other/abl-nuwa-disp-v19.img`（10,440,704 B，`92b10123…`）
+
+| 检查项 | 结果 |
+|---|---|
+| `/sys/class/drm` | `card0`、`card0-DSI-1`、`card0-Writeback-1`、`renderD128` |
+| `card0-DSI-1/status` | **connected** |
+| `card0-DSI-1/enabled` | **enabled** |
+| `card0-DSI-1/modes` | **1440x3200** |
+| 背光 `ae94000.dsi.0` | max 4095 / brightness **4095** / actual **4095** |
+| dmesg | `msm_dpu ae01000.display-controller: bound ae94000.dsi`、`msm-dsi: lane rate 1360000000 Hz, byte clock 170000000 Hz`（与厂商参数一致） |
+| `/dev/fb0` | 存在 |
+
+#### 调试通道（终于有了）
+
+`COM5`（115200）上就是真机的 root shell；`telnet 192.168.0.1` 也可以。后续所有外设调试都靠它。
+
+#### 教训（已写进 troubleshooting 的思路）
+
+**不能只按 `VID_1D6B` 判断「USB 没起来」**：先用 `Get-PnpDevice` 列出所有在位 USB（含无驱动的错误设备），
+否则会把「枚举了但没驱动」误判成「完全没枚举」。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
