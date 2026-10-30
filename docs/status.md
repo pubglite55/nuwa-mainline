@@ -794,6 +794,25 @@ dmesg | grep -c msm_dpu  →  0            ← 确认我们没接管
 - **v47** `other/abl-nuwa-disp-v47-dirout.img` `9f8f8eee…`：复位前显式 `gpiod_direction_output`
 - **v45** `other/abl-nuwa-disp-v45-noreset-white.img` `5d64af65…`：不复位 + 画纯白（最可能出画面）
 
+### 2026-10-31 02:40 第十九轮：v48 寄存器自检就绪
+
+新增 `CONFIG_NUWA_REGDUMP`：在 `dsi_host_transfer()` 每次传输后打印控制器状态，
+上机即可看清面板到底有没有 ACK：
+
+```
+NUWA_DSI t=<type> len=<n> ret=<r> ackerr=<ACK_ERR_STATUS> tmo=<TIMEOUT_STATUS>
+         dln0=<DLN0_PHY_ERR> st0=<STATUS0> fifo=<FIFO_STATUS> lswap=<LANE_SWAP_CTRL>
+```
+
+- `ackerr` 非 0 ⇒ 面板 NACK / 不应答（链路或面板问题）
+- `tmo` 非 0 ⇒ 传输超时
+- `dln0` 非 0 ⇒ lane0 PHY 层错误
+- `lswap` 用来确认 lane 顺序（厂商 `lane_map_0123`，与默认一致）
+
+产物：`other/abl-nuwa-disp-v48-regdump.img` 12,853,248 B `c18e0d1f…`，脚本 `private/test-v48.ps1`。
+
+注：主线没有 DSI 的 debugfs，DPU 侧有 `crtc-0/crc` 可做帧内容校验。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
