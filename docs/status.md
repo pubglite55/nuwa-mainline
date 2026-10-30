@@ -606,6 +606,38 @@ initramfs 的 `/init` 已升级：会读 `/lib/modules/$(uname -r)/nuwa-load.lis
   `crash_history`(sda20)，然后自动关机。
 - 分区标签已取全：`cust -> sda30`（2 GB）、`crash_history -> sda20`、`dbg -> sda3` 等。
 
+### 2026-10-31 00:30 第十四轮：vddd 引脚修正回 GPIO 42（正解但要害不在这里）
+
+#### 重要更正
+
+本机 **活设备树**（Android `/sys/firmware/fdt` 导出，938,828 B）里：
+
+| 电源轨 | 厂商活 DT | 我们的值 |
+|---|---|---|
+| vddio | `gpio = <&tlmm 0x7e>` = 126 | 126 ✓ |
+| vci | `gpio = <&tlmm 0x7f>` = 127 | 127 ✓ |
+| **vddd** | **`gpio = <&tlmm 0x2a>` = 42** | v21 起被改成 66 ✗ |
+
+v21 里“42→66”的依据是 `dtbo-32`（**另一个 hwid 变体**的 overlay，`gpio = 0x42`）。
+本机实测应为 **42**，已改回（v27）。
+
+注意历史：v19/v20 虽然写的是 42，但当时**稳压器同名合并 bug 未修**，42 并不是被我们的 vddd 驱动的；
+v22 修好合并 bug 时引脚已经是 66。所以「vddd=42 + 合并 bug 已修」这个组合直到 v27 才第一次被测到。
+
+#### v27 结果（唯一变量：vddd 42）
+
+- `gpio42 : out high`（我们的 vddd 真正驱动了它）
+- `gpio66 : in low`（现在没人用了）
+- 面板回读：**仍 `id=000000` / `get_power_mode = -61 ENODATA`**
+
+#### 结论
+
+**三路供电引脚全对、全高电平、复位已释放（gpio133 out high）、DSI 时钟全在跑（1.36G/170M/226.67M）、
+`prepare_prev_first=true`、DCS 包类型按 blob 保留、iommus/data-lanes/TE(gpio86) 均与厂商一致 —— 面板依然不应答。**
+
+⇒ “配置层”的假设已全部排除。剩余可能是 **DSI 物理链路层**（mainline `sm8550-dsi-phy-4nm` 对该 PHY 的实际编程）
+或**面板侧**（上电时序/内部状态机）。下一步应转向：读 DSI 错误计数器/中断，以及用 TE(gpio86) 边沿判定面板是否活着。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
