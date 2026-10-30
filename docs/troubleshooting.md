@@ -332,3 +332,29 @@ qemu-system-aarch64 -M virt -cpu max -m 2G -kernel Image -append "" -nographic
 **代价**：FORCE 会丢掉 ABL 的所有参数（`msm_drm.dsi_display0`、`kpti=0` 等）。
 阶段 1（自包含 initramfs + efifb）不需要它们。阶段 2 若需要，改用 UniXNU 的
 `[[dt_patch]]` 精确改 dtb。
+
+---
+
+## 事故记录：binfmt_misc 注册把整台 WSL 搞死（2026-10-30）
+
+**现象**：注册 aarch64 的 binfmt handler 之后，连 `/bin/bash` 都起不来：
+
+```
+WSL (3384 - Relay) ERROR: CreateProcessCommon:875: execvpe(/bin/bash) failed: Exec format error
+```
+
+**原因**：ELF 的 `e_machine` 在偏移 18。手写 magic/mask 时字节数没对齐（少写/多写一个 `\x00`），
+mask 就盖不到 `e_machine`，于是 **x86-64 的二进制也命中这条规则**、被塞给 `qemu-aarch64-static`，
+必然 `ENOEXEC`。而 `bash` 自己也是被 exec 起来的，整台发行版就此无法进入。
+
+**恢复**：`wsl.exe --shutdown`。WSL 的 `binfmt_misc` 是内核级的，随微虚拟机销毁清空；
+WSL 自己的 `WSLInterop` / `llvm-21-runtime.binfmt` 等条目由 WSL init 重新注册。实测约 10 秒恢复。
+
+**教训**：
+
+1. **优先选根本不需要 binfmt 的路径**。要造 arm64 rootfs，直接用官方预构建的
+   `ubuntu-26.04-minimal-cloudimg-arm64-root.tar.xz`（自带 systemd、sshd），解包即用，
+   完全不需要 chroot / qemu-user。
+2. 真要注册，magic 必须是 20 字节：`\x7fELF` + `\x02\x01\x01\x00` + 8 个 `\x00` + `\x02\x00\xb7\x00`；
+   注册后**立刻**回读 `cat /proc/sys/fs/binfmt_misc/<name>` 核对，并测试 `ls /` 是否仍然正常。
+3. 这类事故不会损坏数据，但会让 shell 完全不可用 —— 别在无人值守时顺手试。

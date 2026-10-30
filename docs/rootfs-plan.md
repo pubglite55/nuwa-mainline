@@ -83,3 +83,56 @@
 配置侧：`CONFIG_UCSI_PMIC_GLINK=y`、`CONFIG_TYPEC_UCSI=y`（已是 y）、`CONFIG_USB_XHCI_HCD=y`（已是 y）。
 注意：一旦切成 `otg`，**USB NCM 调试通道就不再是默认的**，需要靠角色切换才能拿到 gadget ——
 所以这条改动要等显示/串口备用通道确认可用之后再做。
+
+## 6. 已准备好的 rootfs 产物（2026-10-30）
+
+用 Ubuntu 官方预构建的 **cloud minimal root**（自带 systemd/sshd，不需要 chroot 或 qemu-user）为底座，
+已针对 nuwa 配好并打包。全部在 WSL 的 `/home/l1872/nuwa/rootfs/`：
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `ubuntu-26.04-arm64-nuwa-rootfs.tar.gz` | 147,198,806 | `b4d101132e9e5aff764d146a42eb18cc550773a04e621d39b086e46164b795d7` |
+| `nuwa-rootfs-8g.img`（6 GB 版，已验证） | 6,442,450,944（稀疏，实占 536 MB） | `ecc7db29f1422aece1655636171609f73783f308f5c28f20484767cf5a8fa957` |
+| `ubuntu-26.04-minimal-cloudimg-arm64-root.tar.xz` | 98,718,844 | 官方原件 |
+
+### 里面已经配好什么
+
+| 项 | 值 |
+|---|---|
+| 发行版 | Ubuntu 26.04.1 LTS (resolute) arm64 |
+| 主机名 | `nuwa` |
+| `/etc/fstab` | `LABEL=nuwa-root / ext4 defaults,noatime 0 1` + tmpfs /tmp |
+| root 密码 | `nuwa`（开发机，SSH 也允许密码登录） |
+| tty1 | 自动登录 root（屏幕就是 tty1，方便现场调试） |
+| SSH | `PermitRootLogin yes`、`PasswordAuthentication yes` |
+| USB 网络 | netplan：`usb0` 固定 `192.168.0.1/24`（switch_root 后仍可 ssh） |
+| cloud-init | **已禁用**（没有 metadata 服务，留着只会等/乱改配置） |
+| machine-id | 已清空，首次启动生成 |
+
+验证过：`e2fsck -fn` 干净；`debugfs` 读回 `/etc/hostname` = `nuwa`；`/sbin/init` → `../lib/systemd/systemd`。
+
+### 想换大小就重新生成
+
+```bash
+# 在 WSL 里以 root 跑（需要 loop mount）
+wsl.exe -d Ubuntu-26.04 -u root bash public/nuwa/tools/mkrootfs-image.sh \
+  /home/l1872/nuwa/rootfs/ubuntu-26.04-arm64-nuwa-rootfs.tar.gz \
+  /home/l1872/nuwa/rootfs/nuwa-rootfs-16g.img 16G
+```
+
+### 写到哪（等方案定了再做）
+
+```bash
+# 方案 B：整盘 U 盘（设备名自己确认，别抄）
+sudo dd if=nuwa-rootfs-8g.img of=/dev/sdX bs=4M status=progress conv=fsync
+
+# 方案 A：写进新建的 linux 分区
+sudo dd if=nuwa-rootfs-8g.img of=/dev/block/by-name/linux bs=4M status=progress conv=fsync
+```
+
+### 还缺什么
+
+- **桌面环境**：现在只有命令行。GNOME 建议**上机后**再装（`apt install ubuntu-desktop`），
+  在 QEMU 里装要几小时且容易踩坑；设备原生速度最快。
+- **Wi-Fi/蓝牙/音频固件**：从原厂 `/vendor/firmware`、`/odm/firmware` 取，阶段 6。
+- 内核模块不需要：当前配置把这些驱动都内建了（见 `handoff.md` 的 P2 清单）。
