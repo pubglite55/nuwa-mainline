@@ -224,6 +224,20 @@ v7 修掉触控 DTS 属性名（厂商驱动读单数 `fts,irq-gpio`/`fts,reset-
    参考 `tech-debt.md` TD-07 需要重写结论。
 10. 根文件系统：fuxi 用独立 `linux` 分区（sda33）。nuwa 需要自己决定落在哪个分区（**动分区表要先问用户**）。
 11. Ubuntu 26.04 + GNOME 用户空间、双系统切换入口。
+#### P2 的「内建化」清单（当前全是模块，必须先改 `=y`）
+
+initramfs 环境没有模块可加载，所以这些子系统要能用，全部得内建：
+
+| 子系统 | 需要的 `=y` | 当前 |
+|---|---|---|
+| Wi-Fi（WCN6856） | `ATH11K`、`ATH11K_PCI` | 都是 `m` |
+| 蓝牙（UART） | `BT_HCIUART`、`BT_QCA`（`BT_HCIUART_QCA` 已是 `y`） | 前两个 `m` |
+| 音频 | `I2C_QCOM_GENI`、`QCOM_Q6V5_PAS`（ADSP 加载器）、`QCOM_APR`、`SOUNDWIRE`、`SOUNDWIRE_QCOM`、`SND_SOC_QDSP6`、`SND_SOC_WCD938X_SDW`、`SND_SOC_LPASS_{RX,TX,VA}_MACRO`、`PINCTRL_LPASS_LPI`、`SND_SOC_SIMPLE_MUX`、`SND_SOC_CS35L41_I2C` | 全 `m` / 未开 |
+| 电池/充电 | `QCOM_PMIC_GLINK`、`BATTERY_QCOM_BATTMGR` | 都是 `m` |
+| GPU | `DRM_MSM` 已 `y`；还需要 Xiaomi 签名的 ZAP shader 固件（fuxi 从 `/odm/firmware` 取） | 缺固件 |
+
+> 改完必须自查：`grep "/dev/udc\|/sys/class/backlight"` 那类运行时证据，而不是只看 `make` 成功。
+
 
 ## 10. 故障判读表
 
