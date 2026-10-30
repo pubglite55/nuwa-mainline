@@ -500,6 +500,27 @@ ABL 传给内核的 cmdline 里**没有 `rdinit=/init`**（我们用 `CONFIG_CMD
 2. 按真值改 DTB：正确的 LDO / GPIO 与极性；
 3. 再跑 v21，看 DCS 回读是否变成有效 ID（`0x38 0x0c 0x0a` 之类）。
 
+### 2026-10-30 深夜 第十轮：面板供电的三个 DTS bug（v21/v22）
+
+对着 **厂商基树/板级 dtbo** 逐项核对，查出三个真问题：
+
+| # | 问题 | 厂商真值 | 我们的错 | 后果 |
+|---|---|---|---|---|
+| 1 | 面板供电路数 | `dsi_panel_pwr_supply_M2` 只有 **vddio(1.8V) / vddd(1.5V) / vci(3.0V)** | 多加了不存在的一路 `avdd`（PM8550 GPIO11 5.5V，该脚永远 `in low`） | 白占且误导 |
+| 2 | `vddd` 引脚 | `display_panel_vddd: gpio = <&tlmm 0x42>` = **GPIO 66** | 写成 **GPIO 42** | vddd 从未真正打开 |
+| 3 | **同名节点合并** | 每个稳压器节点名都不同（`display_panel_vddio` …） | 五个稳压器都叫 `gpio-regulator`，DT 里同名兄弟节点**被合并** | 最终只剩一个节点、`regulator-name` = 最后一个 `camera_ultra_avdd_ldo`，显示四路电源全部失效 |
+
+第 3 条是最隐蔽的：`ls /proc/device-tree | grep -c regulator` 只有 2 个，`cat gpio-regulator/regulator-name` 返回
+`camera_ultra_avdd_ldo` —— 显示供电的 label 都指向同一个（错误的）节点。
+
+修正后（v22）：`gpio66 / gpio126 / gpio127 / gpio133` 全部 `out high`，DSI 时钟 `1.36 GHz VCO / 170 MHz byte / 226.67 MHz pixel` 全在跑，
+`dsi_isr` 有中断，`crtc-0 enable=1 active=1`，背光 4095 —— 但**面板 DCS 回读仍返回 `id=000000` / `get_power_mode=-61 (ENODATA)`**。
+
+#### 结论
+
+主机侧（DRM/DSI/DPU/时钟/供电/复位）已经全部就绪，问题收敛到 **面板协议层**：
+或初始化序列内容与我们解析的 blob 不一致，或该面板的读通道需要 HS 模式。下一步实验方向已明确。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
