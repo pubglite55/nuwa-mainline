@@ -307,6 +307,38 @@ fuxi 的脚本用 `flock` 防这个，已照学：构建脚本里加 `exec 9>.nu
 `other/abl-nuwa-drm-v13.img`（USB PHY 内建 + 完整显示/UFS/触控）正在构建；刷入后如果 USB 枚举出 `1D6B:0104`，
 就能 `telnet 192.168.0.1` 拿到 dmesg，从而第一次看到真机上的真实日志。
 
+### 2026-10-30 深夜 第四轮：完全照 fuxi 重建（结论：是早期死亡，不是 USB）
+
+#### 关键否证：内核没有跑到用户空间
+
+v14（USB 三处修复 + 新 init，含 180 秒安全重启）刷入引导后，**3.5 分钟没有回到 Android**。
+如果内核跑到了 `/init`，180 秒的 `reboot -f` 一定会把它送回 Android。所以：
+
+> **内核死在 `init` 之前**，卡第一屏不是「没屏没网」，是根本没起来。USB 那几条是必须修的真 bug，但不是根因。
+
+#### 按 fuxi 的做法重建
+
+1. 完整克隆参考仓库（79 MB），读 `source/BUILD-INFO.md`、`source/kernel.config`、
+   `scripts/fuxi-build-abl.sh`、`source/initramfs/init`、`source/linux-untracked/.../sm8550-xiaomi-fuxi-min.dts`；
+2. 发现他们的内核**可启动配置**里有 `CONFIG_USB_DWC3_GADGET=y`（我们整符号缺失）、
+   `&usb_1` 显式 `/delete-property/ usb-role-switch;`（我们没删）——两条都是 dwc3 拿不到 peripheral 角色的原因；
+3. init 按他们骨架重写：`busybox --install -s`、ACM `/dev/ttyGS0` 主通道 + NCM/telnetd 备用、
+   等 30 秒 deferred probe、**没 USB 时把 `devices_deferred` 与 dmesg 错误打到屏幕上**、180 秒安全网；
+4. **直接用他们的 `kernel.config` 当底座**构建最小镜像：`other/abl-nuwa-min-v15.img`（9,916,416 B，
+   sha256 `fcb477b8…`），与他们的 10,379,264 B 同一量级；显示驱动先关（对齐他们 `-min` 变体）。
+
+#### 踩到的构建坑（已修）
+
+- `make Image.gz` 时如果 DTB 文件还不存在，`nuwa_dtb.o` 找不到跨目录规则 → `No rule to make target`。
+  **必须先 `make qcom/sm8550-xiaomi-nuwa.dtb`，再 `make Image.gz`**。
+- 同一棵内核树不能并发构建（会互改 `.config`），脚本已加 `flock`。
+
+#### 待办
+
+1. 设备手动进 fastboot → 刷 `abl-nuwa-min-v15.img` → 看是否出现 ACM (`/dev/ttyGS0` / Windows COM) 或 NCM；
+2. 若最小镜像能起来，就按 fuxi 的变体顺序把显示/UFS/触控逐个加回；
+3. 若最小镜像也不行，则问题在 DTB/打包/ABL 交接层面，下一步用他们的「立即复位桩内核」法验证 ABL 是否真的跳到我们的代码。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
