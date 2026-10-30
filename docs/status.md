@@ -745,6 +745,32 @@ dmesg | grep -c msm_dpu  →  0            ← 确认我们没接管
 2. v45 仍黑 → 帧没到面板，查 DSI 命令 DMA 发送与 PHY 输出
 3. 「复位后唤不醒」单独攻：对照厂商 `mdss_dsi_panel_reset()` 的完整时序
 
+### 2026-10-31 02:30 第十七轮：与 fuxi 驱动逐行对比 + 两个待测候选
+
+#### 一、与能工作的 fuxi 面板驱动逐行对比结果
+
+| 项 | fuxi（工作） | 我们 | 判定 |
+|---|---|---|---|
+| 上电顺序 | 逐路上电 + post_on 延时 | 同 | ✓ |
+| 复位前 | `gpiod_direction_output(reset, 1)` → 1ms → `set_value(0)` → 10ms | **直接 `set_value(0)`**（未显式设方向，`GPIOD_ASIS`） | ⚠️ 差异 |
+| 物理电平 | ACTIVE_LOW：先低(1ms)后高 | ACTIVE_HIGH：先低后高 | ✓ 等价 |
+| 初始化前 | `mode_flags \|= MIPI_DSI_MODE_LPM` | `LPM \| CLOCK_NON_CONTINUOUS` | 近似 |
+| `prepare_prev_first` | true | true | ✓ |
+| 命令发送 | 逐条 DCS helper | 按 blob type 字节分发 | ✓ 等价 |
+| DSC/PPS | 驱动打包 PPS | 厂商 blob 内嵌 PPS | ✓ |
+
+→ 唯一实质差异：**fuxi 显式把复位脚配成输出**，我们依赖 `gpiod_set_value` 的副作用。
+
+#### 二、两个待测候选（设备关机中，未上机）
+
+| 候选 | 改动 | 镜像 |
+|---|---|---|
+| **v46** | 复位**前**先发厂商关机序列（`0x28`→20ms→`0x10`→100ms），再复位再初始化（模仿厂商有序关机） | `other/abl-nuwa-disp-v46-offfirst.img` 12,853,248 B `9eda3363…` |
+| **v47** | 复位前 `gpiod_direction_output(reset, 1)` + 1ms（照抄 fuxi） | `other/abl-nuwa-disp-v47-dirout.img` 12,853,248 B `9f8f8eee…` |
+
+测试脚本：`private/test-v46.ps1`（同法可测 v47，改 `$img` 一行）。
+判据：`TE(gpio86)` 是否恢复跳变。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
