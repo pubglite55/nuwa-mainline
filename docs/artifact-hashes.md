@@ -21,3 +21,18 @@
 | bootefi-nodrm\BOOTAA64-NODRM.EFI | 45.62 | 7c65cdbd7291a1297d2f6da9ed57601071e5fecffbe478b360f5c0c43a62520d |
 | bootefi-efifb\BOOTAA64-EFIFB.EFI | 42.2 | 43352ff045147aa67aebe887470c3e8ccd6ae5463bf28ef5c4b0d3635651ba97 |
 | bootefi-efifb\BOOTAA64-MIN.EFI | 42.2 | 9feea3f58b891a9cc6ea0348035dd7954ad630d135fae5ddbeb905fb9743832f |
+
+## ABL 直启路线（2026-10-30）
+
+| 文件 | 大小(MiB) | sha256 |
+|---|---|---|
+| other\abl-nuwa-drm-v9.img | 17.03 | ef0e57013381758c9b73adbcccf5638b33639d72b49a31b8ba686bc6bd0c8e75 |
+| other\abl-nuwa-drm-v8.img | 17.03 | 81dc0cf51c60b57a3d42ed05f95f0b6b714c1fd968148e8755b3fc21e5824e10 |
+| other\abl-nuwa-drm-v7.img | 17.03 | 4b3845d53e4e12307f402ae39e27da3377d7f6f0dc80b8a8f93fdf6c9afb091f |
+| backup\nuwa-backup\recovery.official.img（原厂 recovery，来自固件包） | 100.00 | 4bc16c42d75afc4959bd659e2d2973daf4709f36df8e08aa3a4459f1f9a7340e |
+| backup\nuwa-backup\boot_a.img（原厂 boot，已回刷验证） | 192.00 | fe3a4be28cf1899e4dbcf596115bbf5f1f7dfc34c3a7e662dcd0eb0940c96fcb |
+| WSL: rootfs\ubuntu-26.04-arm64-nuwa-rootfs.tar.gz | 140.38 | b4d101132e9e5aff764d146a42eb18cc550773a04e621d39b086e46164b795d7 |
+| WSL: rootfs\nuwa-rootfs-8g.img（6 GiB 稀疏） | 6144.00 | ecc7db29f1422aece1655636171609f73783f308f5c28f20484767cf5a8fa957 |
+
+> 注：`recovery_a` 的**设备 dd 备份仍未做**（擦数据前设备在 fastboot，无法 dd）。
+> 回退依赖原厂包里的 `recovery.official.img`；下次进 Android 后应补一份设备 dd 备份并比对哈希。

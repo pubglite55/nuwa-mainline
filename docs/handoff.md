@@ -76,7 +76,8 @@
 | 内建 DTB（`CONFIG_NUWA_FORCE_BUILTIN_DTB`） | **离线通过** | `nm vmlinux` 有 `nuwa_dtb` / `nuwa_dtb_end`；Image 里能搜到面板 compatible 与 cmdline |
 | 面板驱动 `panel-nuwa-m2` | **离线通过** | 编译进内核（`CONFIG_DRM_PANEL_NUWA_M2=y`），DSC/时序/lane 速率与厂商逐项对齐 |
 | 触控 FTS 驱动 | **离线通过** | `CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI=y` 编过（靠新增的 notifier 空桩，见 TD-09） |
-| 显示 | **待真机** | 从未刷入 |
+| 显示 | **真机失败（未到 msm probe）** | v9 已刷入 `recovery_a` 并启动，卡第一屏、无 USB 枚举；疑似内建 DTB memory size=0，见 `status.md` §2026-10-30 真机首刷 |
+| ABL 直启 | **真机失败（写入成功）** | `Sending/Writing OKAY`，但内核未跑起来 |
 | USB 网络 / Wi-Fi / BT / 音频 | **待真机 / 待做** | 见 §9 |
 | HyperOS 双系统 | **真机通过（原状）** | 未动 `boot_a` |
 
@@ -199,7 +200,11 @@ v7 修掉触控 DTS 属性名（厂商驱动读单数 `fts,irq-gpio`/`fts,reset-
 
 ### P0 真机点亮显示（设备上线后第一件事）
 
-1. **备份 `recovery_a`**（它会覆盖，且不在现有备份集里）：
+1. **备份 `recovery_a`**（它会覆盖，且不在现有备份集里）。
+   ⚠️ 目前**还没有设备 dd 备份**；回退暂用原厂包里的 `backup/nuwa-backup/recovery.official.img`
+   （sha256 `4bc16c42…`，同 ROM 版本，理论等价）。下次进 Android 请补一份 dd 备份。
+
+   原始做法：
    ```powershell
    adb -s 3705933 shell su -c "dd if=/dev/block/by-name/recovery_a of=/sdcard/recovery_a.img bs=1M"
    adb -s 3705933 pull /sdcard/recovery_a.img "backup\nuwa-backup\recovery_a.img"

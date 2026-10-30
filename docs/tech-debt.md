@@ -145,6 +145,19 @@
 | 去掉条件 | 屏幕点亮且 `unprepare` 路径验证过（能正常关屏再亮屏） |
 | 关联文档 | `abl-direct-boot.md`、`rootfs-plan.md` |
 
+
+### TD-13 内建 DTB 里 memory 节点 size = 0（真机卡第一屏的直接原因）
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | `sm8550-xiaomi-nuwa.dts` 里 `memory@a0000000 { reg = <0 0xa0000000 0 0>; }`，指望 bootloader 填 size |
+| 位置 | `arch/arm64/boot/dts/qcom/sm8550-xiaomi-nuwa.dts:451`；配合 `CONFIG_NUWA_FORCE_BUILTIN_DTB`（TD-11） |
+| 为什么暂时需要 | 主线所有板级 DTS 都这么写，因为正常路径下 bootloader 会补 memory；我们却是**丢弃 bootloader 的 DTB** 用自己那份 |
+| 正确做法 | 把 nuwa 真实 DRAM 的 base/size（多 bank 就多节点）写死进 DTS，或让内建 DTB 的 memory 由构建时注入 |
+| 影响与风险 | **致命**：内核拿到 0 字节 RAM，`setup_arch` 阶段即死，卡第一屏、无 USB、无日志、不会自动回 Android |
+| 去掉条件 | 读回真实 `/proc/device-tree/memory@*/reg` 并写进 DTS，v10 真机点亮后关闭 |
+| 关联文档 | `status.md` §2026-10-30 真机首刷、`abl-direct-boot.md` §内建 DTB 机制 |
+
 ---
 
 ## 已还

@@ -15,8 +15,8 @@
 | 内核 cmdline 生效 | **离线通过** | 空 `-append` 下仍有完整 cmdline（FORCE 验证） |
 | 4 KiB FAT16 挂载 | **有源码线索** | EDK2 九项检查全过，但 UFSDxe 行为未知 |
 | 显示（efifb，UEFI 路线） | **真机失败** | 启动早期有输出，随后黑屏（见 §2026-10-29） |
-| 显示（原生 MSM DSI + panel 驱动，ABL 路线） | **离线通过** | 内核/DTB/面板驱动全部编译进镜像，DSC/时序/lane 速率与厂商参数逐项核对一致；待真机 |
-| ABL 直启（recovery_a 放 boot.img v1） | **离线通过** | 镜像已组装并回读校验（header v1、kernel = Image.gz + 诱饵 DTB）；待真机 |
+| 显示（原生 MSM DSI + panel 驱动，ABL 路线） | **真机失败** | 参数全部离线核对一致，但内核疑似在 `setup_arch` 阶段就死（0 RAM），根本没走到 msm probe；等 v10 修正内存节点后重测 |
+| ABL 直启（recovery_a 放 boot.img v1） | **真机失败** | 写入成功（`Sending/Writing OKAY`）也能启动，但卡第一屏且无任何 USB 枚举；疑似内建 DTB 的 memory size=0，见 §2026-10-30 真机首刷 |
 | 触控（FTS） | **待调研** | 驱动已内建，需真机验证事件 |
 | USB 网络（NCM） | **待调研** | init 逻辑完整，需真机验证 usb0 |
 | Wi-Fi / BT | **待调研** | 固件未准备 |
@@ -25,7 +25,11 @@
 
 ## 一句话状态
 
-**已切换到 ABL 直启路线**（见 [abl-direct-boot.md](abl-direct-boot.md)），Mu UEFI 路线冻结为回退方案。
+**ABL 直启路线已在真机上走通「刷入 + 启动」两步，但内核卡在第一屏**（见 §2026-10-30 真机首刷）。
+最可能的原因是内建 DTB 里 `/memory@a0000000` 的 size 为 0 —— 主线 DTS 指望 bootloader 填，
+而我们用 `CONFIG_NUWA_FORCE_BUILTIN_DTB` 把 bootloader 那份换掉了。修复方向明确：把真实 DRAM 布局写进 DTS。
+
+> 历史说明：Mu UEFI 路线已冻结为回退方案（[abl-direct-boot.md](abl-direct-boot.md)）。
 
 内核、设备树、面板驱动、DSC 参数全部离线就绪并通过交叉核对，产物 `other/abl-nuwa-drm-v4.img`
 （17.85 MB，sha256 `c97ff6f7…`）。**当前唯一阻塞是设备不在线**：需要先备份 `recovery_a`，再刷入。
@@ -167,6 +171,54 @@ Finished sshd-keygen.service - Generate sshd host keys on first boot.
 
 顺带修掉一个真 bug：init 里原来按 `/dev/vd*[0-9]*`（分区名）匹配，**裸盘 `/dev/vda` 匹配不到**，
 已改成整盘与分区都试。
+
+## 2026-10-30 真机首刷 ABL 直启（v9）：卡第一屏，USB 完全不枚举
+
+### 做了什么
+
+| 步骤 | 结果 |
+|---|---|
+| `fastboot flash recovery_a abl-nuwa-drm-v9.img` | `Sending 17440 KB OKAY` / `Writing OKAY` |
+| `fastboot reboot recovery` | `Rebooting into recovery OKAY` |
+| 观察 30 秒 | **没有任何 USB 枚举**：既没有我们的 `1D6B:0104`，也没有 `18D1`（fastboot/adb），也没有 `05C6`（EDL） |
+| 屏幕 | 卡在第一屏 |
+
+### 已回退 / 已按要求执行的操作
+
+| 操作 | 状态 |
+|---|---|
+| `fastboot flash recovery_a backup/nuwa-backup/recovery.official.img`（原厂 recovery） | OKAY |
+| `fastboot flash boot_a / boot_b backup/nuwa-backup/boot_a.img`（原厂 boot，用户要求） | 均 OKAY |
+| `fastboot erase userdata` + `fastboot erase metadata`（用户要求清数据） | 均 OKAY |
+| 之后再次刷入 v9 复现同一现象 | 一致：卡第一屏、无 USB |
+
+### 根因假设（最可能，且可验证）
+
+内建 DTB 的 `/memory@a0000000` 是：
+
+```
+reg = <0 0xa0000000 0 0>;      /* 尾部 size = 0 */
+```
+
+主线 `sm8550-xiaomi-nuwa.dts` 里这行的注释写得很清楚：**“We expect the bootloader to fill in the size”**。
+走 UEFI 路线时是 UEFI stub / ABL 填的；而 `CONFIG_NUWA_FORCE_BUILTIN_DTB=y` 之后，
+内核**丢弃** ABL 传进来（已被 ABL 补好 memory）的 DTB，改用我们自己 `.incbin` 的那份 —— 于是拿到 0 字节 RAM，
+`setup_arch` 阶段就死，连 USB 都来不及初始化。
+
+这也解释了为什么 QEMU 能跑通：QEMU 提供自己的 DTB，memory 是完整的。
+
+### 下一步（明确、可离线完成）
+
+1. 取到 nuwa 真实 DRAM 布局：设备上 `adb shell su -c 'cat /proc/device-tree/memory@*/reg | xxd'`，
+   或从原厂 `boot_a.img` 里取出带 memory 的 DTB 读 `reg`。
+2. 把真实 `base/size` 写进 `sm8550-xiaomi-nuwa.dts` 的 `memory@a0000000`（多 bank 就多写几个节点）。
+3. 重建 v10 再刷。若仍然卡第一屏，下一个怀疑点是 UFS probe 或 `reserved-memory` 与真实布局冲突。
+
+### 附带结论
+
+- `recovery_a` 的刷写在 ABL 上**确实可行**（写进去了、也尝试启动了），路线本身没被否定；
+- 卡死时设备**不会**自己回 Android（300 秒自动重启的逻辑还没跑到 init），需要长按电源强制关机；
+- 强制关机后按“音量下 + 电源”能稳定回到 fastboot，恢复通路可用。
 
 ## 2026-10-29 突破：内核首次真机启动
 
