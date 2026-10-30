@@ -638,6 +638,75 @@ v22 修好合并 bug 时引脚已经是 66。所以「vddd=42 + 合并 bug 已�
 ⇒ “配置层”的假设已全部排除。剩余可能是 **DSI 物理链路层**（mainline `sm8550-dsi-phy-4nm` 对该 PHY 的实际编程）
 或**面板侧**（上电时序/内部状态机）。下一步应转向：读 DSI 错误计数器/中断，以及用 TE(gpio86) 边沿判定面板是否活着。
 
+### 2026-10-31 01:40 第十五轮：**面板是活的**——接管把 TE 停掉了
+
+> ⚠️ 证据等级更正：用户明确表示 **v19–v32 期间没有目视确认屏幕状态**。
+> 因此本文档中那些“屏幕全黑”的描述，凡未注明“用户目视”，一律只算**未验证**。
+> 唯一经用户目视确认的是 **v33（借用固件画面 + 写彩噪）仍为全黑**。
+
+#### 一、厂商 debugfs 黄金快照（首次采集）
+
+Android 侧挂载 debugfs 后可读 `qcom,mdss_dsi_m2_38_0c_0a_dsc_cmd`：
+
+```
+CTRL_ENGINE = ON / VIDEO_ENGINE = OFF / COMMAND_ENGINE = ON
+BYTE_CLK = 170000000, PIXEL_CLK = 226666666, ESC_CLK = 19200000
+```
+
+与我们的 170 MHz byte / 226.67 MHz pixel **完全一致**。
+
+#### 二、面板参数逐项对照（活设备树 vs 我们的驱动）
+
+| 项 | 厂商值 | 我们 | 判定 |
+|---|---|---|---|
+| 面板型号 | `M2_PANEL_PA` (`0x4d3200380c00`) | `samsung,amb673cp01-m2` | ✓ |
+| DSI 控制器/PHY | `dsi-ctrl-num=0`, `dsi-phy-num=0` | 只用 dsi0/phy0 | ✓ **单 DSI，不是双 DSI** |
+| 拓扑 | `<2 2 1>`（2 mixer, 2 DSC, 1 intf） | 同 | ✓ |
+| clockrate | `0x510ff400` = 1.36 GHz | 同 | ✓ |
+| porch | h 32/32/16, v 24/24/8 | 同 | ✓ |
+| 分辨率 | 1440×3200 | 同 | ✓ |
+| DSC | 720×25×2, 8bpp, 10bpc, v1.2, block-pred | 同 | ✓ |
+| reset-sequence | `<0 1 1 5>` | 低1ms→高10ms | ✓ |
+| 背光 | min 4 / max 4095 | 同 | ✓ |
+| TE | `platform-te-gpio = <tlmm 86>`，`te-pin-select=1` | gpio86 `mdp_vsync` | ✓ |
+| 供电 | vci 3.0 / vddio 1.8 / **vddd 1.5** | 同（vddd 引脚本轮修正为 **GPIO 42**） | ✓ |
+
+→ **配置层已无任何可对比的差异**。之前“双 DSI”的猜测被 `dsi-ctrl-num=0` 否定。
+
+#### 三、DCS 读不可用作存活判据
+
+在 **复位之前**（此时面板仍由 bootloader 初始化、屏幕上还是 logo）读 `0x0A`，
+依然返回 `-61 ENODATA`。⇒ 主线 msm 的 DCS 读路径本身不通，不能用它判断面板死活。
+
+#### 四、⚠️ 关键实验：关掉 mdss 后 TE 会跳变
+
+v33 里把 `&mdss { status = "disabled"; }`（完全不接管 DPU/DSI），然后采样 `gpio86`：
+
+```
+10 次 `: in  hig`  /  10 次 `: in  low`     ← TE 在正常翻转
+dmesg | grep -c msm_dpu  →  0            ← 确认我们没接管
+```
+
+对比之前接管时：**40 次采样恒为 `low`**。
+
+**结论：面板是活的、已上电、已初始化、处于 display-on；是“我们的接管”把它停掉的。**
+
+#### 五、借用固件画面（v32→v33）
+
+- v32 失败：`0xb8000000` 当时是普通 System RAM，`__ioremap_prot` 告警，simpledrm 起不来
+- v33 修复：把 `0xb8000000`(45 MB) 声明为 `no-map` 保留区 → `simpledrm 1.0.0 for b8000000.framebuffer`，
+  `/dev/fb0` = 1440×3200 stride 5760 ✓
+- 但写入彩噪后用户目视 **仍全黑** ⇒ bootloader 在交接时已停止扫描，
+  “借用画面”这条路在本机 **不成立**（与 fuxi 不同）
+
+#### 六、下一步（无需用户目视也能验证）
+
+有了 TE 这个客观信号，可以完全不靠眼睛做二分：
+
+1. **mdss 开、但面板驱动不做 reset/init**（只 attach + display on）：若 TE 继续跳 → 是我们的 reset/init 序列把面板弄停；若 TE 立刻停 → 是 DPU 接管动作本身
+2. 按 1 的结论再二分：只关 reset / 只关 init / 只关 DPU 上电
+3. 判据统一用：`TE(gpio86)` 是否翻转 + `encoder-0/status` 的 `frame_done_cnt` 是否增长
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
