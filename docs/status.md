@@ -771,6 +771,29 @@ dmesg | grep -c msm_dpu  →  0            ← 确认我们没接管
 测试脚本：`private/test-v46.ps1`（同法可测 v47，改 `$img` 一行）。
 判据：`TE(gpio86)` 是否恢复跳变。
 
+### 2026-10-31 02:45 第十八轮：确认 DSI 命令确实发出去了
+
+源码级排查（`drivers/gpu/drm/msm/dsi/dsi_host.c`）：
+
+- `dsi_host_transfer()`：`if (!msm_host->power_on) return -EINVAL;`
+  → 我们的写入全部返回 0，**说明 DSI host 已 power_on**
+- `dsi_cmd_dma_tx()`：单 DSI 情况下 `msm_dsi_manager_cmd_xfer_trigger()` 返回 true，
+  随后 `wait_for_completion_timeout(200ms)` 等 `CMD_DMA_DONE` 中断，超时会返回 `-ETIMEDOUT`
+  → 我们从未收到超时，**说明命令 DMA 完成、数据真的发到 lane 上了**
+
+⇒ 结论：**LP 写路径是通的，命令确实发送并被控制器确认完成**。
+故障因此收敛为“面板收到了但不执行/不响应”。
+
+结合第十七轮：复位后所有命令都不生效；不复位时同一套命令无害。
+最可能的原因是**复位把面板置入一个需要特殊唤醒序列的状态**，
+而不是 DSI 发送链路的问题。
+
+#### 待测候选（设备关机中）
+
+- **v46** `other/abl-nuwa-disp-v46-offfirst.img` `9eda3363…`：复位前先发厂商关机序列
+- **v47** `other/abl-nuwa-disp-v47-dirout.img` `9f8f8eee…`：复位前显式 `gpiod_direction_output`
+- **v45** `other/abl-nuwa-disp-v45-noreset-white.img` `5d64af65…`：不复位 + 画纯白（最可能出画面）
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
