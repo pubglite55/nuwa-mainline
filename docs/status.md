@@ -82,11 +82,27 @@ PPS 是用内核 `drm_dsc_pps_payload_pack()` 的字节序逐字段解码的，�
 另外补上了厂商的关机序列（`0x28` + 20 ms，`0x10` + 100 ms），放在 `unprepare()` 里，
 否则面板断电后会残留自发光、下次初始化也可能失败。
 
+4. **触控属性名对不上**：厂商 `fts_spi` 驱动的 `parse_dt()` 读的是**单数**属性
+   `fts,irq-gpio` / `fts,reset-gpio`，并要求 `fts,reset-gpio-enable` 才去申请 reset；
+   而 DTS（抄自原厂 dtbo）只有**复数**写法 `fts,irq-gpios` / `fts,reset-gpios`。
+   后果是 `irq_gpio = -EINVAL` → `gpio_to_irq(-22)` → `request_threaded_irq` 失败 → 触控 probe 直接挂。
+   已在 DTS 里两套并存补上单数属性。
+
+### 触控 DTS 属性完备性核对
+
+用脚本把驱动 `parse_dt()` 读取的 24 个属性与 DTS 提供的对照：修完之后必需项全部齐备，
+剩下 13 个缺失项都是可选项（`fts,fod-*`、`fts,support-*`、`fts,swap-*`、`fts,avdd-gpio`、`panel`），
+驱动读到 -EINVAL 只打日志不失败。SPI 侧依赖也确认：`SPI/SPI_MASTER/SPI_QCOM_GENI/QCOM_GENI_SE` 全部 `=y`。
+
+> ⚠️ 已知的下一处静默陷阱：`CONFIG_I2C_QCOM_GENI=m`。它不影响显示与触控，
+> 但音频阶段要挂 CS35L41（I2C）时必须改成 `=y`，否则 I2C 总线根本不存在。
+
 ### 产物
 
 | 文件 | 大小 | sha256 |
 |---|---|---|
-| **`other/abl-nuwa-drm-v6.img`** | **17,858,560** | **`d7ba3eff2dddd735b8fad8658247486c51e7089f4c2c46093e09c75e0636e0ce`（当前）** |
+| **`other/abl-nuwa-drm-v7.img`** | **17,854,464** | **`4b3845d53e4e12307f402ae39e27da3377d7f6f0dc80b8a8f93fdf6c9afb091f`（当前，刷这个）** |
+| `other/abl-nuwa-drm-v6.img` | 17,858,560 | `d7ba3eff…`（缺触控属性名修复） |
 | `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339`（dispcc 仍是模块） |
 | `other/abl-nuwa-drm-v5.img` | 17,854,464 | `91f2d68f2a34aba6d950cacf5ec2120b4fc4d0dadc24798c28780ebdf5d17445`（dispcc 已内建，缺 off 序列） |
 | `other/abl-nuwa-drm-v3.img` | 17,854,464 | `8af2181d887ab6defcdca48fff6f85366c4c01dd819c15a5a4a9813b6929ff27`（旧 initramfs） |

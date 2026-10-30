@@ -181,7 +181,8 @@ unpack_bootimg --boot_img /tmp/abl-nuwa.img --out /tmp/ub   # 回读校验 heade
 
 | 文件 | 大小 | sha256 |
 |---|---|---|
-| **`other/abl-nuwa-drm-v6.img`** | **17,858,560** | **`d7ba3eff2dddd735b8fad8658247486c51e7089f4c2c46093e09c75e0636e0ce`（当前，刷这个）** |
+| **`other/abl-nuwa-drm-v7.img`** | **17,854,464** | **`4b3845d53e4e12307f402ae39e27da3377d7f6f0dc80b8a8f93fdf6c9afb091f`（当前，刷这个）** |
+| `other/abl-nuwa-drm-v6.img` | 17,858,560 | `d7ba3eff…`（触控属性名还没修） |
 | `other/abl-nuwa-drm-v5.img` | 17,854,464 | `91f2d68f…`（dispcc 已内建，缺面板 off 序列） |
 | `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7…`（**dispcc 还是模块，会静默黑屏**） |
 | `other/abl-nuwa-drm-v3.img` 及更早 | 17,854,464 | 早期版本（reset 极性 / 序列延时未修），**不要用** |
@@ -189,7 +190,9 @@ unpack_bootimg --boot_img /tmp/abl-nuwa.img --out /tmp/ub   # 回读校验 heade
 
 版本演进：v1/v2 reset 极性写反 + 序列延时被跳过；v4 换成原生 DRM 版 initramfs；
 **v5 修掉最致命的一条 —— `CONFIG_SM_DISPCC_8550=m`（显示时钟控制器是模块，initramfs 环境里不会加载，
-`mdss` 只会 probe defer 到黑屏）**；v6 补上厂商关机序列（`0x28`+20 ms、`0x10`+100 ms）。
+`mdss` 只会 probe defer 到黑屏）**；v6 补上厂商关机序列（`0x28`+20 ms、`0x10`+100 ms）；
+v7 修掉触控 DTS 属性名（厂商驱动读单数 `fts,irq-gpio`/`fts,reset-gpio`，原厂 dtbo 是复数，
+导致 `gpio_to_irq(-22)` 让触控 probe 直接失败）。
 
 ## 9. 待办（按顺序，别跳步）
 
@@ -214,6 +217,7 @@ unpack_bootimg --boot_img /tmp/abl-nuwa.img --out /tmp/ub   # 回读校验 heade
 ### P2 首版范围剩余
 
 8. Wi-Fi / BT：WCN6856 → `ath11k`（PCIe）+ `hci_qca`（UART）。固件要从原厂 `/vendor/firmware` 或 `/odm/firmware` 取。
+   **先改 `CONFIG_I2C_QCOM_GENI=y`**（当前是 `m`）：音频要挂 CS35L41，I2C 总线不能是模块。
    **注意 fuxi 用的是 WCN7850/ath12k，与 nuwa 不同**，别照抄。
 9. 音频：ADSP + 双 CS35L41（I2C `0x40`/`0x42`）+ WCD938x。
    **fuxi 的实机结果证明「PIL 禁用 ⇒ 音频不可达」是错的**（那是 UEFI 的限制，ABL 路线没有）。
