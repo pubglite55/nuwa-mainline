@@ -1,6 +1,6 @@
 # nuwa 主线移植 — 当前状态
 
-更新时间：2026-10-28
+更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
 ## 功能状态表（只用规范状态词）
@@ -10,11 +10,13 @@
 | 功能 | 状态 | 依据 |
 |---|---|---|
 | UEFI 固件启动 | **真机通过** | 屏幕有界面，USB 枚举出 VID_18D1 |
-| 内核 EFI stub 加载 | **离线通过** | QEMU：`Run /init as init process` |
-| initramfs + /init 执行 | **离线通过** | QEMU：`nuwa-init: bound to /dev/kmsg` |
+| 内核 EFI stub 加载 | **真机启动** | 真机屏幕出现内核输出后黑屏，init 计时器生效 |
+| initramfs + /init 执行 | **真机启动** | 真机：300 秒后自动重启，证明 `/init` 跑完 |
 | 内核 cmdline 生效 | **离线通过** | 空 `-append` 下仍有完整 cmdline（FORCE 验证） |
 | 4 KiB FAT16 挂载 | **有源码线索** | EDK2 九项检查全过，但 UFSDxe 行为未知 |
-| 显示（efifb） | **待调研** | 需真机确认屏幕输出 |
+| 显示（efifb，UEFI 路线） | **真机失败** | 启动早期有输出，随后黑屏（见 §2026-10-29） |
+| 显示（原生 MSM DSI + panel 驱动，ABL 路线） | **离线通过** | 内核/DTB/面板驱动全部编译进镜像，DSC/时序/lane 速率与厂商参数逐项核对一致；待真机 |
+| ABL 直启（recovery_a 放 boot.img v1） | **离线通过** | 镜像已组装并回读校验（header v1、kernel = Image.gz + 诱饵 DTB）；待真机 |
 | 触控（FTS） | **待调研** | 驱动已内建，需真机验证事件 |
 | USB 网络（NCM） | **待调研** | init 逻辑完整，需真机验证 usb0 |
 | Wi-Fi / BT | **待调研** | 固件未准备 |
@@ -23,9 +25,330 @@
 
 ## 一句话状态
 
-走 **UEFI 路线**（ABL 直启已放弃）。所有离线产物就绪并逐项验证，
-**唯一阻塞是设备不在线**，三个物理问题待真机回答。
+**已切换到 ABL 直启路线**（见 [abl-direct-boot.md](abl-direct-boot.md)），Mu UEFI 路线冻结为回退方案。
 
+内核、设备树、面板驱动、DSC 参数全部离线就绪并通过交叉核对，产物 `other/abl-nuwa-drm-v4.img`
+（17.85 MB，sha256 `c97ff6f7…`）。**当前唯一阻塞是设备不在线**：需要先备份 `recovery_a`，再刷入。
+
+## 2026-10-30 路线切换：ABL 直启 + 原生 MSM 显示
+
+依据是同一 SoC（SM8550）的 fuxi 移植：它在真机上跑通了 Phosh 桌面（原生 MSM DSI 120 Hz、
+WiFi、双 CS35L41 音频），而它**完全没有用 Mu UEFI**。做法是 `XBL → 高通 UEFI → ABL → 直接加载
+Android boot.img（header v1）`，内核字段是 `Image.gz + 厂商 DTB`，initramfs 编进内核。
+
+完整原理与分区账见 [abl-direct-boot.md](abl-direct-boot.md)。
+
+### 内核改动（本机 `~/nuwa/linux`，7.3.0 @ 734bef548）
+
+| 文件 | 改动 |
+|---|---|
+| `arch/arm64/Kconfig` / `include/asm/setup.h` / `kernel/setup.c` | 新增 `CONFIG_NUWA_FORCE_BUILTIN_DTB`：`__fdt_pointer` 指向内建 DTB |
+| `arch/arm64/kernel/nuwa_dtb.S` + `Makefile` | `.incbin` 嵌入 `sm8550-xiaomi-nuwa.dtb` |
+| `include/drm/drm_mipi_dsi.h` + `msm/dsi/dsi_host.c` | 新增 `hs_rate` 字段并在 `dsi_calc_pclk()` 覆盖 byte clock |
+| `drivers/gpu/drm/panel/panel-nuwa-m2.c` | 按 fuxi 模式重写（prepare/unprepare、DSC、背光） |
+| `drivers/input/touchscreen/fts_spi` | 补 `panel_event_notifier` 兼容桩（TD-09） |
+| `sm8550-xiaomi-nuwa.dts` | 删 simple-framebuffer/`nuwa_fb_mem`、写正式 bootargs、修 reset 极性 |
+
+### 参数核对（离线、逐项对齐厂商）
+
+| 项 | 厂商值 | 我们的值 | 结论 |
+|---|---|---|---|
+| `panel-clockrate` | `0x510ff400` = 1,359,996,928 | `hs_rate = 1360000000` | ✅ |
+| 水平 porch（前/后/脉宽） | 32 / 32 / 16 | 32 / 32 / 16 | ✅ |
+| 垂直 porch（前/后/脉宽） | 24 / 24 / 8 | 24 / 24 / 8 | ✅ |
+| 分辨率 / 刷新率 | 1440×3200 @ 60 | 1440×3200 @ 60 | ✅ |
+| reset GPIO | `platform-reset-gpio = <&tlmm 133 0>`（ACTIVE_HIGH） | `GPIO_ACTIVE_HIGH` | ✅（原为 LOW，已修） |
+| DSC PPS 首条命令 | DCS `0x9e` + 128 字节 | 序列原样携带 | ✅ |
+| DSC 版本 / bpc / bpp | 1.2 / 10 / 8.0 | 1.2 / 10 / 8<<4 | ✅ |
+| pic / slice | 1440×3200，720×25，2 片 | 同 | ✅ |
+| `line_buf_depth` | 0xB = 11 | 主线自动 `bpc+1 = 11` | ✅ |
+| `convert_rgb` / `block_pred` | 1 / 1 | 主线强制 1 / 驱动置 1 | ✅ |
+| `rc_buf_thresh` | 14,28,…,126 | 主线表同 | ✅ |
+| `first_line_bpg_offset` | 13 | 主线 12 | ⚠️ 差异（TD-10） |
+| RC range max_qp（个别档） | 8/14/15/16/17 | 4/15/16/17/19 | ⚠️ 差异（TD-10） |
+
+PPS 是用内核 `drm_dsc_pps_payload_pack()` 的字节序逐字段解码的，不是猜的。
+
+### 本次修掉的两个真 bug
+
+1. **reset 极性写反**：DTS 写 `GPIO_ACTIVE_LOW`，驱动 `set(0)→set(1)` 会把面板一直按在复位态。
+   厂商 `platform-reset-gpio` 的 flags 是 `0x00`（ACTIVE_HIGH），已改为 `GPIO_ACTIVE_HIGH`。
+2. **初始化序列的延时没生效**：`send_seq()` 里原本是个空语句（`if (...) ;`），
+   导致 `0x11`（sleep out）之后要求的 120 ms 被跳过。已改为 `msleep(seq[i + 4])`。
+
+### 产物
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339` |
+| `other/abl-nuwa-drm-v3.img` | 17,854,464 | `8af2181d887ab6defcdca48fff6f85366c4c01dd819c15a5a4a9813b6929ff27`（旧 initramfs） |
+
+
+## 2026-10-29 突破：内核首次真机启动
+
+### 根因一：breadcrumb 写了一个不存在的物理地址
+
+此前所有「内核没起来」的现象，根因是一行调试代码：
+
+    SYM_CODE_START(primary_entry)
+        bl      record_mmu_state
+        /* NUWA_BREADCRUMB (checkpoint 1) */
+        movz    x28, #0x0008, lsl #32
+        movk    x28, #0xd300, lsl #16
+        movk    x28, #0x3000          // x28 = 0x8d3003000 约 37.9 GB
+        str     x27, [x28]            // <- data abort，内核死在第一条指令
+
+0x8d3003000 = **37.9 GB**，远超本机 RAM（十几 GB）。MMU 关闭时写这个地址直接
+data abort。UniXNU 读到的 n1 FFF7FFFF / ck 5C57DFBF 全是总线返回的垃圾值，
+所以「kernel died before arm_init」其实是**被自己的调试代码杀掉的**。
+
+DT 里我们自己加的 nuwa-note-region@8b9f0000（0x8_8b9f0000）也与该地址不符。
+
+### 处置
+
+移除全部 4 处 breadcrumb（head.S 三处、init/main.c 一处）后重新编译，
+内核**正常启动并执行到 initramfs**：屏幕出现 Linux 输出，随后黑屏，
+300 秒（原 120 秒）后自动重启 —— 证明 /init 完整执行。
+
+### 根因二：UniXNU 的日志永远看不见
+
+UniXNULog() 只写 DebugLib 和 SerialIo，**从不输出到屏幕**。
+所以 boot: LoadImage ... %r 这类关键错误一直写进看不见的地方。
+现在已改为：内核 initramfs 把诊断摘要写入 ESP，UniXNU 读出来显示在菜单底部。
+
+| 文件 | 内容 |
+|---|---|
+| \nuwa-log.txt | 完整 dmesg + 显示 / USB / backlight 状态 |
+| \nuwa-summary.txt | 3 行摘要，显示在 UniXNU 菜单底部 |
+
+### 当前剩余问题
+
+**显示在启动后期黑屏**。内核早期有输出（efifb / earlycon 工作），之后画面消失。
+候选原因：fbcon 被 DRM 接管后 unregister、背光被关、或 panel 断电。
+诊断依赖 nuwa-summary.txt 里的 bl= / drm= 字段。
+
+
+### 2026-10-30 夜间：显示与 UFS 的配置缺口（设备离线，静态分析）
+
+| 缺口 | 影响 | 处置 |
+|---|---|---|
+| `CONFIG_SYSFB_SIMPLEFB` 未启用 | 即使 DT 有 simple-framebuffer 节点也不会创建 fb 设备 | 改为 `=y` |
+| `CONFIG_FB_SIMPLE=m` | simplefb 是模块，initramfs 无模块 | 改为 `=y` |
+| DT 缺 simple-framebuffer 节点 | 内核不知道固件在扫哪块内存 | 两侧 DTS/dtb 都加 |
+| `CONFIG_PHY_QCOM_QMP_UFS=m` | UFS PHY 是模块，UFS 不 probe | 改为 `=y` |
+| cmdline 无 iommu.passthrough | UFS 的 iommus 走 SMMU，未映射会 DMA fault | 加 `iommu.passthrough=1` |
+| gop.c 跳过 BLT-only GOP | Qualcomm DisplayDxe 是 BLT-only，efifb 不注册 | base/size 非 0 时接受 |
+
+simple-framebuffer 节点参数：`reg = <0xb8000000 0x1194000>`、1440x3200、
+stride 5760、format a8r8g8b8。来源是 DTS chosen 里遗留的注释
+`earlycon=simplefb,0xb8000000,1440,3200`，与 SimpleFbDxe 的 Display Reserved 区域一致。
+
+**纠正一条此前的误判**：nuwa DTS 里 `&ufs_mem_hc` / `&ufs_mem_phy` 配置一直是完整的
+（含 `status = "okay"`、reset-gpio 210、三路电源），此前判断「缺 ufshc 节点」是 grep
+关键字写成了 `&ufshc` 而实际节点名是 `&ufs_mem_hc`。
+
+**v4 补了关键一环**：simplefb probe 会调用 `request_mem_region()`，对 System RAM
+区域必然失败，因此 framebuffer 必须先从 RAM 中剔除。已在两侧 DTS/dtb 的
+`reserved-memory` 里加 `framebuffer@b8000000`（reg `0x0 0xb8000000 0x0 0x1194000`，
+不带 `no-map`，保留可 ioremap 且 linear mapping 仍有效）。
+
+**v5 再修一处**：SimpleFbDxe 用的是 `PixelBlueGreenRedReserved8BitPerColor`（BGRA），
+simplefb 的 `format` 因此从 `a8r8g8b8` 改为 `b8g8r8a8`，否则红蓝互换。
+
+v5 产物：`other/uefi-nuwa-v5/Mu-nuwa.img`（2de1733e…）、
+`other/payload-bootb-v5.img`（8359201f…，内核自 v3 起未变，改动全在 dtb）。
+
+已验证的 dtb 参数：width 0x5a0(1440)、height 0xc80(3200)、stride 0x1680(5760)、
+format b8g8r8a8；chosen 与 reserved-memory 两处 framebuffer@b8000000 节点都在。
+
+另外确认：`CONFIG_FRAMEBUFFER_CONSOLE=y` 且 `FRAMEBUFFER_CONSOLE_ROTATION=y`，
+fbcon 侧没有缺口；所有 backlight/LED 驱动都是 `=m`（不加载），因此内核不会关背光，
+屏幕亮度保持 UEFI 状态。
+
+**v6 加了一条兜底通道**：关掉 `CONFIG_STRICT_DEVMEM`，init 在 `/dev/fb0` 不存在时
+直接用 `dd` 写 `/dev/mem` 偏移 `0xB8000000`。这条路径不依赖任何显示驱动，
+只要物理 framebuffer 可写，屏幕就会出现噪点——用来把「framebuffer 不可写」和
+「驱动没注册」这两种情况区分开。
+
+v6 组合：`boot_a` 用 `other/uefi-nuwa-v5/Mu-nuwa.img`（2de1733e…，dtb 已是 b8g8r8a8）、
+`boot_b` 用 `other/payload-bootb-v6.img`（内核 a283ff18…）。
+
+**三项排除性验证**（都是好消息，消除了风险）：
+
+| 检查 | 结果 | 意义 |
+|---|---|---|
+| `CONFIG_DRM_MSM` | `# is not set`，无 `msm.ko`，System.map 无 `msm_dpu` | MSM 绝不会 probe，simplefb 可独占显示，不会被抢硬件 |
+| busybox applet | Ubuntu `busybox-static` 1.37.0，标准 applet 齐全 | init 里 `dd`/`tr`/`cut`/`wc`/`ip` 都可用（本机是 x86_64 跑不了 aarch64 busybox，只能间接确认） |
+| 原厂 ufshc 节点 | 与主线 `sm8550.dtsi` 基本一致，唯一差异是原厂多了 `qcom,ice`（可选加密引擎） | UFS 不 probe 不是 DT 缺属性导致的，需要设备 dmesg 才能继续 |
+| UFS 静态依赖链 | `INTERCONNECT_QCOM_SM8550=y`、`INTERCONNECT_QCOM_BCM_VOTER=y`、`QCOM_GDSC=y`、`QCOM_RPMH/PD=y`、`COMMAND_DB=y`、`SCSI_UFS_QCOM=y`、`PHY_QCOM_QMP_UFS=y` 全部内建 | 配置层面已无可查，UFS 问题只能是运行时（时钟/PHY/SMMU），必须靠设备 dmesg |
+
+**副作用提示**：MSM 不编也意味着原生显示接管（DPU+DSI）完全没有编译进去，
+将来做 panel driver 时要先把 `CONFIG_DRM_MSM=m` 打开并按模块方式调试。
+
+### 2026-10-30 凌晨：拿到完整的面板配置（原生接管的钥匙）
+
+在 GitHub 上找到了 nuwa 的原厂设备树源码，已存进 `public/nuwa/resources/`：
+
+| 文件 | 大小 | 内容 |
+|---|---|---|
+| `panel-m2-38-0c-0a.dtsi` | 142 KB | **面板完整配置，含 14 段 `mdss-dsi-on-command` 初始化序列** |
+| `nuwa-sde-display-mtp.dtsi` | 5.8 KB | 面板供电、背光、reset-gpio 绑定 |
+| `nuwa-sm8550.dtsi` | 12 KB | nuwa 板级基础 dtsi |
+
+来源：`LineageOS/android_kernel_xiaomi_sm8550-devicetrees`，分支 `lineage-24.0`，
+路径 `qcom/display/display/`。
+
+提取到的关键参数：
+
+```
+panel-name      xiaomi 38 0c 0a cmd mode dsc dsi panel
+resolution      1440 x 3200
+DSC version     0x12 (1.2), slice-width 720, bits-per-pixel 8
+framerate       60 Hz / 120 Hz 两档 timing
+clockrate       1,360,000,000 Hz
+reset-gpio      tlmm 133（与主线 DTS 一致）
+backlight       bl_ctrl_dcs（DCS 命令控制，不是独立背光芯片）
+```
+
+**这条信息改变了两件事**：
+
+1. 背光是 **DCS 控制**的，没有独立背光芯片。所以 `bl_ctrl_dcs` 那条 DCS 命令必须发，
+   否则面板不上背光。之前 summary 里 `bl=none` 是正常的（没有 backlight class 设备）。
+2. 原生接管不再是「从零写驱动」——初始化序列、时序、DSC 参数全部现成，
+   可以照着 `panel-samsung-*` 的框架改编，工作量从「一到两周」降到「几天」。
+
+**初始化序列已解析**（`public/nuwa/tools/parse-panel-dtsi.py`）：
+
+```
+第一段 on-command：977 字节 → 74 条 DCS 命令
+  [0] type=0x39 len=129  0x9e ...   DSC PPS（压缩参数）
+  [1] type=0x15 len=2    0x9d 0x01  DSC 使能
+  [2] type=0x05 len=2    0x11 0x00  Sleep Out
+  [3] type=0x15 len=2    0x35 0x00  Set Tear On
+  [4] type=0x39 len=5    0x2a ...   Set Column Address
+  [5] type=0x39 len=5    0x2b ...   Set Page Address
+```
+
+Qualcomm 的 `mdss-dsi-on-command` 是专有打包格式（type/last/vc/ack/wait/len/payload），
+转换工具已能正确拆解，可直接生成 `mipi_dsi_dcs_write_seq()` 调用。
+注意 dtsi 里有 14 段 on-command，分属不同 timing（60Hz/120Hz 各一套），写驱动时要按
+`dsi_panel` 的多 timing 机制分开处理。
+
+### 2026-10-30 凌晨：simplefb 的两个关键校正
+
+读 `drivers/video/fbdev/simplefb.c` 源码后校正了两处此前的判断：
+
+**校正一：格式名写错了。** `SIMPLEFB_FORMATS` 宏（`include/linux/platform_data/simplefb.h`）
+只认这 11 个名字：
+
+```
+r5g6b5 r5g5b5a1 x1r5g5b5 a1r5g5b5 r8g8b8 x8r8g8b8
+a8r8g8b8 x8b8g8r8 a8b8g8r8 x2r10g10b10 a2r10g10b10
+```
+
+**没有 `b8g8r8a8`**。v5 里写的 `b8g8r8a8` 会让 `simplefb_parse_dt()` 返回
+`Invalid format value` 而 probe 直接失败。BGRA 的正确名字是 **`a8b8g8r8`**，已改。
+
+**校正二：`request_mem_region` 失败不是致命的。** 源码里失败只 `dev_warn` 然后
+沿用原 resource 继续 `ioremap_wc`。所以 reserved-memory 不是硬性前提，但保留它更稳妥
+（能避免内核把这块 RAM 分配出去）。
+
+另外确认：DT 没有 `clocks`/`regulators` 不会导致 probe 失败
+（`simplefb_clocks_get()` 在 `of_clk_get_parent_count()==0` 时直接返回 0）。
+真正会让 probe 失败的是 `devm_aperture_acquire_for_platform_device()`——
+它和 efifb 互斥：efifb 成功则 simplefb 让位，efifb 失败则 simplefb 接管，两者互补。
+
+v7 产物：`other/uefi-nuwa-v7/Mu-nuwa.img`（ae3b848c…，format 已修正）、
+`other/payload-bootb-v7.img`（内核 a283ff18…，与 v6 相同）。
+最终 dtb 参数：1440x3200 / stride 5760 / `a8b8g8r8`。
+
+### 为什么「早期有画面、之后黑屏」——机制已确认
+
+`efifb_probe()` 里有一行硬性门槛：
+
+```c
+if (!si->lfb_linelength)
+        return -ENODEV;
+```
+
+efi stub 面对 BLT-only GOP 时拿不到 stride（`lfb_linelength` 为 0），于是 efifb
+**直接放弃注册**。而 `earlycon=efifb` 只需要 `lfb_base`/`lfb_width`/`lfb_height`/`lfb_depth`，
+不要求 linelength，所以启动早期仍然能往 framebuffer 写字。
+
+这完整解释了现象：earlycon 画出内核日志 → 内核接管后 earlycon 退场 → 没有 efifb、
+没有 fbcon → 画面停住变黑。同时也确认 **aperture 是空闲的**
+（`devm_aperture_acquire_for_platform_device()` 没被 efifb 占），simplefb 可以顺利接管。
+
+这也修正了最早的一个推断：不是「GOP 完全不可用」，而是「GOP 可用但缺 stride 字段，
+导致 efifb 的门槛过不去」。所以 v7 让 simplefb 用 DT 里写死的 stride 5760 补上这个缺口，
+方向是对的。
+
+### UFS 静态分析收尾（结论：配置无懈可击，只剩运行时）
+
+逐项核对完最后两个疑点，都与原厂一致：
+
+| 项 | 原厂 | 主线 | 结论 |
+|---|---|---|---|
+| `phy@1d80000` clocks | ref / ref_aux / qref 三个 | `RPMH_CXO_CLK` / `GCC_UFS_PHY_PHY_AUX_CLK` / `TCSR_UFS_CLKREF_EN` | 一致 |
+| `ufs_mem_phy` power-domain | `<gcc 0x05>` | `UFS_MEM_PHY_GDSC` = **5** | 一致 |
+| `ufshc` power-domain | `<gcc 0x04>` | `UFS_PHY_GDSC` = **4** | 一致 |
+
+至此 UFS 的静态面全部核对完毕：驱动配置、DT 节点、时钟、电源域、interconnect、
+分区表支持、PHY 全部正确。**问题只能是运行时**——PHY 校准、时钟实际频率、
+SMMU 映射、或 4 KiB 逻辑块下的 GPT 解析。这些都必须靠设备 dmesg 判断，
+而 dmesg 又依赖显示先通。所以当前唯一有效的下一步仍然是：让屏幕亮起来。
+
+### 2026-10-30 凌晨：初始化序列转成 C 代码
+
+面板 dtsi 里有 7 个 timing（60/120/40/30/24/120/120 Hz），每个各带一套完整
+`mdss-dsi-on-command`（977~1046 字节）。已全部转成 C 数组：
+
+```
+public/nuwa/resources/panel-amb673cp01-sequences.h   43 KB  630 行
+  seq_60hz_0   seq_120hz_0   seq_40hz_0   seq_30hz_0
+  seq_24hz_0   seq_120hz_1   seq_120hz_2
+```
+
+生成器：`public/nuwa/tools/gen-panel-seq.py`（可重复运行，dtsi 更新后重生成）。
+
+**注意**：这三套 120 Hz 序列内容不同（1016~1046 字节），对应不同的 DSC 压缩比或
+timing 变体。写驱动时必须按 `dsi_panel` 的 timing 索引正确对应，不能随便挑一套。
+数组保持 Qualcomm 打包格式（type/last/vc/ack/wait/len/payload），在 probe 时
+解析后逐条 `mipi_dsi_dcs_write_seq()` 发送。
+
+### 2026-10-30 凌晨：panel driver 骨架编译通过
+
+发现 `drivers/gpu/drm/panel/panel-nuwa-m2.c` 已存在（旧骨架，167 行，
+`CONFIG_DRM_PANEL_NUWA_M2=m` 已启用），但它从未工作过，原因有五个：
+
+| 问题 | 后果 |
+|---|---|
+| `compatible = "xiaomi,nuwa-m2-panel"` | DTS 里是 `samsung,amb673cp01-m2`，**永远不匹配** |
+| 没有初始化序列 | 面板不上电 |
+| `mode_flags = MIPI_DSI_MODE_VIDEO` | 这块屏是 **command mode**，标志写反了 |
+| 没有 `dsi->dsc` 配置 | DSC 压缩不生效 |
+| 没有 `mipi_dsi_attach()` | 根本没接到 DSI host |
+
+已用新版本整体覆盖（保留文件名以复用已有 Kconfig/Makefile），并修正：
+
+- `of_match` 同时匹配 `samsung,amb673cp01-m2` 和 `xiaomi,nuwa-m2-panel`
+- `mode_flags` 改为 `CLOCK_NON_CONTINUOUS | VIDEO_NO_HFP | VIDEO_NO_HBP | VIDEO_NO_HSA | NO_EOT_PACKET`
+- DSC 1.2：slice 720x25、`bits_per_component=10`、`bits_per_pixel=8<<4`、`block_pred_enable`
+- 加入 `amb673cp01_send_seq()`：解析 Qualcomm 打包格式并逐条下发
+- `mipi_dsi_attach()` / `detach()` 补齐
+- 60Hz 时序从 dtsi 提取（hfp32/hbp32/hpw16/vfp24/vbp24/vpw8）
+
+**编译验证通过**：`panel-nuwa-m2.o`（54 KB），符号 `amb673cp01_probe`、
+`amb673cp01_of_match` 均存在。
+
+**仍是骨架，未在真机验证**。三个已知待办：
+
+1. 多 timing 切换：目前只发 60Hz 序列，120/40/30/24Hz 未接
+2. 背光：`bl_ctrl_dcs` 需要在 enable 时下发 DCS 背光命令
+3. `CONFIG_DRM_MSM` 必须打开（当前 `# is not set`），否则 panel 驱动没有 host 可挂
+
+**待验证**：刷 v3 后按 1 启动，看屏幕是否持续有日志（不再黑屏），
+以及 init 能否挂载 ESP 写出 nuwa-log.txt。
 ## 路线选择依据
 
 | 路线 | 结论 |

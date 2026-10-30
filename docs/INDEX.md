@@ -1,24 +1,26 @@
 # nuwa 项目索引
 
-> 最后更新：2026-10-28
+> 最后更新：2026-10-30
 
 ## 一句话状态
 
-主线 Linux 移植走 **UEFI 路线**（ABL 路线因 dtb 强校验 + 无 console 已放弃）。
-所有离线产物已就绪并逐项验证，**等待真机验证启动链路**。
+主线 Linux 移植走 **ABL 直启路线**（把 Android boot.img 放进 `recovery_a`，见 [abl-direct-boot.md](abl-direct-boot.md)）；
+Mu UEFI 路线冻结为回退方案。内核 + 设备树 + 原生 MSM 显示驱动全部离线就绪，**等待真机刷入**。
 
 ## 文档地图
 
 | 文档 | 内容 | 什么时候看 |
 |---|---|---|
+| [**handoff.md**](handoff.md) | **交接文档：接手先读这一份** | **第一次接手时** |
 | [status.md](status.md) | 当前状态快照 | 每次接手先看 |
 | [next-steps.md](next-steps.md) | **设备回来后按什么顺序做什么**（4 个分支） | 设备在线时 |
-| [uefi-route.md](uefi-route.md) | UEFI 路线完整原理、14 轮验证记录 | 想理解为什么这么做 |
+| [**abl-direct-boot.md**](abl-direct-boot.md) | **当前路线：ABL 直启 + 原生 MSM 显示** | 刷机/打包前必看 |
+| [uefi-route.md](uefi-route.md) | 旧 UEFI 路线原理、14 轮验证记录（已冻结） | 想理解为什么换路线 |
 | [troubleshooting.md](troubleshooting.md) | 故障排查决策树（6 类现象 → 判据 → 行动） | 出问题时 |
 | [install-plan.md](install-plan.md) | 三阶段路线（验证 → 部署 Ubuntu → 桌面/双系统） | 规划后续 |
 | [panel-params.md](panel-params.md) | 面板参数 | 做原生显示接管时 |
 | [peripherals.md](peripherals.md) | 外设对照 | 做外设时 |
-| [**tech-debt.md**](tech-debt.md) | **技术债表（7 条未还，按影响排序）** | **每次用临时做法时必须登记** |
+| [**tech-debt.md**](tech-debt.md) | **技术债表（9 条未还、1 条已还，按影响排序）** | **每次用临时做法时必须登记** |
 | [artifact-hashes.md](artifact-hashes.md) | 产物哈希清单 | 刷机前核对 |
 
 ## 产物清单（other/）
@@ -27,7 +29,8 @@
 
 | 文件 | 大小 | 内容 | 刷到 |
 |---|---|---|---|
-| `uefi-nuwa/Mu-nuwa.img` | 2.13 MB | UEFI 固件 RELEASE | `boot_a` |
+| **`abl-nuwa-drm-v4.img`** | 17.85 MB | **ABL 直启：boot.img v1，Image.gz + 诱饵 DTB，原生 MSM 显示** | `recovery_a` |
+| `uefi-nuwa/Mu-nuwa.img` | 2.13 MB | UEFI 固件 RELEASE（回退） | `boot_a` |
 | `uefi-nuwa-debug/Mu-nuwa.img` | 2.25 MB | UEFI DEBUG（屏幕打印卷扫描） | `boot_a` |
 | **`payload-bootb.img`** | 192 MiB | **4 KiB FAT16**，卷标 NUWAESP，nodrm 内核 | `boot_b` |
 | `esp-nuwa.img` | 64 MB | 512 B FAT32，正常版内核 49.3 MB | `vendor_boot_a` |

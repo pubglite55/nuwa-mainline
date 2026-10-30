@@ -3,21 +3,9 @@
 > 依据 `references/discipline.md` §2：为了尽快跑通可以先用临时做法，但**每一个都要登记**，
 > 之后集中还。规则：加临时做法和登记技术债在同一个提交里完成。
 >
-> 最后更新：2026-10-28
+> 最后更新：2026-10-30
 
 ## 未还
-
-### TD-01 借用固件画面（simpledrm / efifb），未做原生 DPU/DSI 接管
-
-| 项 | 内容 |
-|---|---|
-| 临时做法 | 内核用 `FB_EFI=y`（efifb）或 `DRM_SIMPLEDRM`，继承 UEFI 的 DisplayDxe 已经点亮的 framebuffer |
-| 位置 | 内核 `.config`（`bootefi-efifb` 用 `FB_EFI`，`bootefi-nodrm` 用 `DRM_SIMPLEDRM`）；`DRM_MSM` 关闭 |
-| 为什么暂时需要 | 原生接管需要 panel driver（`samsung,amb673cp01-m2`）+ DSC 参数 + DPU，工作量大；借用画面能在 1–2 天内看到内核日志 |
-| 正确做法 | `msm` 做成 `=m`，启动时不加载，调试通道起来后手动 `modprobe`，逐步接管 DPU/DSI/panel |
-| 影响与风险 | 无亮度控制、无熄屏、无刷新率控制；GNOME 连接器显示 "Unknown"；**依赖 UEFI 不放掉 framebuffer** |
-| 去掉条件 | 原生 panel + DPU 驱动能点亮并支持背光/熄屏后，切到 `DRM_MSM` |
-| 关联文档 | `uefi-route.md` §显示路线、`panel-params.md` |
 
 ### TD-02 `clk_ignore_unused pd_ignore_unused` 防资源回收
 
@@ -109,11 +97,59 @@
 | 去掉条件 | 拿到 `uefipil.cfg` 并验证 PIL 不 panic |
 | 关联文档 | `uefi-route.md` §第二十六/二十九轮 |
 
+### TD-09 触控驱动的 panel_event_notifier 是空桩
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | 新增 `include/linux/soc/qcom/panel_event_notifier.h`，只提供类型与空实现，`register()` 返回一个假 cookie |
+| 位置 | `drivers/input/touchscreen/fts_spi/fts.c` 依赖的厂商 API；桩文件是新增的 |
+| 为什么暂时需要 | FTS 触控驱动用高通下游的 panel 事件回调做熄屏挂起/亮屏恢复，主线没有这套 API；缺头文件直接编不过 |
+| 正确做法 | 由 panel 驱动在 `drm_panel_funcs` 里直接通知触控驱动，或接主线 DRM 的 panel notifier（若上游有） |
+| 影响与风险 | 触控探测、固件下载、上报全部正常；**熄屏时控制器不会被挂起**，息屏功耗偏高 |
+| 去掉条件 | 显示链稳定后，把 panel 的 blank/unblank 事件接到触控驱动 |
+| 关联文档 | `abl-direct-boot.md`、`status.md` §2026-10-30 |
+
+### TD-10 DSC 速率控制参数与厂商 PPS 有细微差异
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | 面板驱动只填 DSC 的结构性字段（版本、尺寸、slice、bpc、bpp、block_pred），其余交给主线 `msm` 的 `dsi_populate_dsc_params()` 算 |
+| 位置 | `drivers/gpu/drm/panel/panel-nuwa-m2.c`；`drivers/gpu/drm/msm/dsi/dsi_host.c`；`drivers/gpu/drm/display/drm_dsc_helper.c` |
+| 为什么暂时需要 | `dsi_populate_dsc_params()` 会**无条件覆盖**面板驱动给的 RC 参数，驱动层无法指定 |
+| 正确做法 | 若真机出现压缩伪影，给 `dsi_populate_dsc_params()` 加一张按 bpp/bpc 覆盖的表，用厂商 PPS 的数值 |
+| 影响与风险 | 结构性字段全部一致（已逐字段解码核对），只有 `first_line_bpg_offset`（厂商 13 vs 主线 12）和个别 `rc_range max_qp` 不同 → 编码器与面板解码器的速率模型略有偏差，可能表现为局部噪点/色带 |
+| 去掉条件 | 真机确认画面无误后关闭；有伪影则补表 |
+| 关联文档 | `abl-direct-boot.md` §显示链、`status.md` §2026-10-30 参数核对表 |
+
+### TD-11 kernel 字段里塞「诱饵」厂商 DTB，内核实际用内建 DTB
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | boot.img 的 kernel 字段 = `Image.gz + 厂商 DTB`；内核用 `CONFIG_NUWA_FORCE_BUILTIN_DTB` 把 `__fdt_pointer` 指回内建的 `sm8550-xiaomi-nuwa.dtb` |
+| 位置 | `arch/arm64/{Kconfig,include/asm/setup.h,kernel/setup.c,kernel/nuwa_dtb.S,kernel/Makefile}`；诱饵为 `private/nuwa-bait.dtb`（取自 `Mu-nuwa.img` 的 FdtBlob） |
+| 为什么暂时需要 | ABL 会按 `msm-id`/`board-id` 自己选 DTB 并叠 dtbo overlay；叠到主线 DTB 上会「Booting OKAY 后卡死」（fuxi 已实测） |
+| 正确做法 | 让主线 DTB 自己带上 ABL 认得的 `qcom,msm-id`/`qcom,board-id`，并验证 dtbo overlay 不破坏它 |
+| 影响与风险 | 内核完全忽略 ABL 传的 DTB（含其 bootargs）；镜像里多 930 KB 无用数据；诱饵 DTB 一旦被 ABL 拒绝就黑屏 |
+| 去掉条件 | 验证「主线 DTB + 正确 id + dtbo overlay」能正常跳转后撤销 |
+| 关联文档 | `abl-direct-boot.md` §为什么要「诱饵 DTB」 |
+
 ---
 
 ## 已还
 
-（暂无）
+### TD-01 借用固件画面（simpledrm / efifb），未做原生 DPU/DSI 接管 —— **已还（2026-10-30）**
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | 内核用 `FB_EFI=y`（efifb）或 `DRM_SIMPLEDRM`，继承 UEFI 的 DisplayDxe 已经点亮的 framebuffer |
+| 位置 | 内核 `.config`（`bootefi-efifb` 用 `FB_EFI`，`bootefi-nodrm` 用 `DRM_SIMPLEDRM`）；`DRM_MSM` 关闭 |
+| 为什么暂时需要 | 原生接管需要 panel driver（`samsung,amb673cp01-m2`）+ DSC 参数 + DPU，工作量大；借用画面能在 1–2 天内看到内核日志 |
+| 正确做法 | `msm` 做成 `=m`，启动时不加载，调试通道起来后手动 `modprobe`，逐步接管 DPU/DSI/panel |
+| 影响与风险 | 无亮度控制、无熄屏、无刷新率控制；GNOME 连接器显示 "Unknown"；**依赖 UEFI 不放掉 framebuffer** |
+| 去掉条件 | 原生 panel + DPU 驱动能点亮并支持背光/熄屏后，切到 `DRM_MSM` |
+| 关联文档 | `uefi-route.md` §显示路线、`panel-params.md` |
+| **还款方式** | 换到 ABL 直启后，原生 `msm` + `panel-nuwa-m2` 驱动接管显示，不再借用固件画面；见 `abl-direct-boot.md` |
+| **残留** | 真机尚未点亮，UEFI 路线的 efifb 镜像仍保留作回退 |
 
 ---
 
@@ -121,8 +157,10 @@
 
 | 优先级 | 技术债 | 理由 |
 |---|---|---|
-| 1 | TD-01 原生显示接管 | 解锁亮度/熄屏/刷新率，且是 TD-02/TD-03 的前提 |
+| 1 | TD-11 诱饵 DTB | 决定能否启动，且掩盖了 DTB 传递的真实语义 |
+| 2 | TD-10 DSC 速率参数 | 直接影响画质，出伪影时必须还 |
 | 1.5 | TD-08 改用 dt_patch | 阶段 2 需要 ABL 显示参数时必做 |
+| 3 | TD-09 触控 panel 事件 | 影响息屏功耗，不影响功能 |
 | 2 | TD-02 去掉防回收参数 | 全局开关掩盖问题，长期会误导 |
 | 3 | TD-05 确认 4KiB FAT | 影响启动链路稳定性 |
 | 4 | TD-03 旋转 | 随 TD-01 一起解决 |

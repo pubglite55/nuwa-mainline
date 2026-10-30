@@ -2,7 +2,56 @@
 
 > 前提：所有产物已就绪，见 `status.md`。
 
-## 第 0 步：确认设备在线、电量足够、并核对镜像
+## ⚠️ 当前路线（2026-10-30 起）：ABL 直启，写入 `recovery_a`
+
+> 旧 UEFI 流程（下面「第 0 步」之后的内容）保留作回退参考。原理见 [abl-direct-boot.md](abl-direct-boot.md)。
+> **硬约束：不动 `vendor_boot_a` / `vendor_boot_b`。**
+
+### A. 先备份 `recovery_a`（只做一次，必须做）
+
+`recovery_a` 不在现有备份集里，而它就是我们要覆盖的分区。
+设备在 **Android**（不是 fastboot）时：
+
+```powershell
+adb -s 3705933 shell su -c "dd if=/dev/block/by-name/recovery_a of=/sdcard/recovery_a.img bs=1M"
+adb -s 3705933 pull /sdcard/recovery_a.img "backup\nuwa-backup\recovery_a.img"
+adb -s 3705933 shell su -c "rm /sdcard/recovery_a.img"
+Get-FileHash "backup\nuwa-backup\recovery_a.img" -Algorithm SHA256
+```
+
+预期大小 **104,857,600 字节**（`0x6400000`）。核对无误再往下走。
+
+### B. 刷入 Linux 镜像
+
+```powershell
+& "C:\Android\platform-tools\fastboot.exe" devices           # 应看到 3705933  fastboot
+& "C:\Android\platform-tools\fastboot.exe" getvar battery-voltage
+& "C:\Android\platform-tools\fastboot.exe" flash recovery_a "other\abl-nuwa-drm-v4.img"
+& "C:\Android\platform-tools\fastboot.exe" reboot recovery
+```
+
+`abl-nuwa-drm-v4.img` sha256 = `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339`。
+
+### C. 判读
+
+| 现象 | 含义 | 下一步 |
+|---|---|---|
+| 屏幕出现内核日志 + `nuwa-init: 就绪` | 链路全通 | 记下 DRM connector / backlight 状态，进入 Ubuntu 部署 |
+| 屏幕亮但全黑无文字 | DPU 起了、fbcon/面板时序没对上 | 连 USB 网 `telnet 192.168.0.1`，看 `dmesg | grep -i msm` |
+| 完全黑屏、USB 也不枚举 | 内核或 DSI 早期就死了 | 300 秒后自动回 Android；用 `console=ttyAMA0` 加串口，或回退 |
+| 卡在 `Booting OKAY` 不动 | 诱饵 DTB 被 ABL 拒绝 | 换诱饵：从 `dtbo_a` 取真厂商 DTB（TD-11） |
+
+### D. 回退
+
+```powershell
+& "C:\Android\platform-tools\fastboot.exe" flash recovery_a "backup\nuwa-backup\recovery_a.img"
+```
+
+> ABL 一次失败启动后，同一个 fastboot 会话会拒绝后续镜像 —— 先 `fastboot reboot bootloader`。
+
+---
+
+## （旧 UEFI 路线）第 0 步：确认设备在线、电量足够、并核对镜像
 
 ### 电量必须先查（经验库的"高频+耗时"坑）
 
