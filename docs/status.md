@@ -813,6 +813,45 @@ NUWA_DSI t=<type> len=<n> ret=<r> ackerr=<ACK_ERR_STATUS> tmo=<TIMEOUT_STATUS>
 
 注：主线没有 DSI 的 debugfs，DPU 侧有 `crtc-0/crc` 可做帧内容校验。
 
+### 2026-10-31 02:50 第二十轮：v49 一次启动出全阶段矩阵（设备关机，未上机）
+
+#### 分阶段 TE 采样的实现
+
+利用 SM8550 TLMM 布局（每引脚块 `0x1000`，输入寄存器在块内偏移 `0x4`，bit0 = 电平）：
+
+```c
+readl(0x0f100000 + 0x4 + 0x1000 * 86) & 0x1    /* gpio86 (TE) 电平 */
+```
+
+在 `prepare()` 的三个阶段各采 200 ms（2000 次 × 100 µs）数边沿：
+
+```
+NUWA_TE_STAGE after-rails  edges=? last=?
+NUWA_TE_STAGE after-reset  edges=? last=?
+NUWA_TE_STAGE after-init   edges=? last=?
+```
+
+判读：`after-init` 有边沿 ⇒ 面板被成功唤醒；无边沿 ⇒ 复位后唤醒失败，转查 `ackerr`。
+
+产物：`other/abl-nuwa-disp-v49-stageprobe.img` 12,853,248 B `919c6271…`，脚本 `private/test-v49.ps1`。
+
+#### 待上机候选清单（全部已构建）
+
+| 版本 | 作用 | 判据 |
+|---|---|---|
+| v49 `919c6271…` | 三阶段 TE 自检 | 一次定性 |
+| v48 `c18e0d1f…` | DSI 寄存器自检 | `ackerr` 面板是否 ACK |
+| v46 `9eda3363…` | 复位前有序关机 | TE 是否恢复 |
+| v47 `9f8f8eee…` | 复位前显式 direction_output | TE 是否恢复 |
+| v45 `5d64af65…` | 不复位 + 画纯白 | 人眼看白屏 |
+
+一键脚本：`private/run-matrix.ps1`（依次跑 v48/v46/v47/v45 并汇总到 `private/matrix-report.txt`）。
+
+#### 阻塞
+
+**设备处于关机状态，无法远程开机**（`adb`/`fastboot`/COM 全部不可见）。
+所有后续结论都必须上机，需人工按电源键开机。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
