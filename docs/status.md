@@ -339,6 +339,37 @@ v14（USB 三处修复 + 新 init，含 180 秒安全重启）刷入引导后，
 2. 若最小镜像能起来，就按 fuxi 的变体顺序把显示/UFS/触控逐个加回；
 3. 若最小镜像也不行，则问题在 DTB/打包/ABL 交接层面，下一步用他们的「立即复位桩内核」法验证 ABL 是否真的跳到我们的代码。
 
+### 2026-10-30 深夜 第五轮：最小内核同样起不来 → 转用「复位桩」定位
+
+#### 结果
+
+- `other/abl-nuwa-min-v15.img`（**以 fuxi 的 kernel.config 为底座**，9,916,416 B）刷入后同样无任何 USB，
+  且 180 秒安全重启没有发生 → **连最小内核都没进用户空间**。
+  这条把嫌疑从「我们的配置太杂」排除掉了：问题在**内核代码之前的环节**（镜像 / DTB / ABL 交接）。
+- 已按 fuxi 的方法做好**复位桩镜像** `other/abl-nuwa-stub-v16.img`（9,912,320 B，sha256 `51fd84bb…`）：
+  新增 `CONFIG_NUWA_STUB_RESET`，在 `setup_arch()` 第一行直接 `arm_smccc_smc(0x84000009)`（PSCI SYSTEM_RESET）。
+  判据：刷入后**几秒内自己回到 Android** ⇒ ABL 确实跳到我们的代码；**永远卡第一屏** ⇒ 问题在镜像/DTB/ABL 层。
+
+#### 顺带完成的取证
+
+| 项 | 结果 |
+|---|---|
+| 原厂 `boot_a.img` / `recovery.official.img` 里的 FDT | **0 个**（GKI 风格，boot 只有内核、recovery 只有 ramdisk） |
+| `dtbo_a.img` 里的 FDT | **57 个 overlay** |
+| `vendor_boot_a.img` 里的厂商 DTB | **8 个**：msm-id 依次为 `0x25c / 0x258 / 0x207 / 0x207 / 0x25b / 0x259 / 0x218 / 0x218` |
+| 我们在用的诱饵 `private/nuwa-bait.dtb` | model `8550 nuwa`、`msm-id = 207/218 (20000)`、`board-id = 10008 0`、930,579 B —— 与设备侧匹配，**大概率是对的**（`Kalama` 即 SM8550，207 是它的 msm-id） |
+| 我们板级 DTS 的 `qcom,msm-id` | `<0x25c 0x20000>` —— 这个值抄自 fuxi，与设备实际（207）**不一致**；只影响 ABL 选 DTB，我们内置 DTB 不经 ABL，暂不影响 |
+
+#### 参考仓库更新（v0.4.0，2026-10-30）
+
+新增 `hardware/本机硬件配置.md`、`hardware/配件供应商差异.md`，以及省电深化（熄屏电流 117→28.5 mA）、WiFi 5 GHz、蜂窝诊断。
+**启动链路部分没有变化**：仍是 boot.img v1 + 厂商诱饵 DTB + `CONFIG_FUXI_FORCE_BUILTIN_DTB`，当前镜像 `s2idle2`（`7.3.0+ #207`）。
+
+#### 阻塞
+
+设备在 v15min 引导后挂死（无 USB），需要人工**长按电源 20 秒**再按「音量下 + 电源」进 fastboot，
+才能刷入复位桩验证 ABL 交接。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
