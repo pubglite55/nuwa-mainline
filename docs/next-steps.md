@@ -21,11 +21,23 @@ Get-FileHash "backup\nuwa-backup\recovery_a.img" -Algorithm SHA256
 
 预期大小 **104,857,600 字节**（`0x6400000`）。核对无误再往下走。
 
-### B. 刷入 Linux 镜像
+### B. 刷入 Linux 镜像（用脚本，别手敲）
+
+```powershell
+.\public\nuwa\tools\flash-recovery-linux.ps1 -DryRun   # 先只检查：镜像哈希、设备、电量、备份
+.\public\nuwa\tools\flash-recovery-linux.ps1           # 备份(如缺) → 校验 → 刷 recovery_a → reboot recovery
+```
+
+脚本把三条教训写成了硬检查，任何一条不过就退出：
+
+1. `recovery_a` 没有备份 → 强制先 dd + pull + 校验大小；
+2. 电量 < 40% → 拒绝；
+3. 镜像 sha256 与登记值不符 → 拒绝（防止误刷 v1/v2 坏镜像）。
+
+手工等价命令（脚本不可用时）：
 
 ```powershell
 & "C:\Android\platform-tools\fastboot.exe" devices           # 应看到 3705933  fastboot
-& "C:\Android\platform-tools\fastboot.exe" getvar battery-voltage
 & "C:\Android\platform-tools\fastboot.exe" flash recovery_a "other\abl-nuwa-drm-v7.img"
 & "C:\Android\platform-tools\fastboot.exe" reboot recovery
 ```

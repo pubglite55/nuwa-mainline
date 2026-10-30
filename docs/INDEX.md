@@ -60,7 +60,8 @@ Mu UEFI 路线冻结为回退方案。内核 + 设备树 + 原生 MSM 显示驱�
 
 | 脚本 | 用途 |
 |---|---|
-| `flash-uefi.ps1` | **统一刷写入口**：`-BootB` / `-Mode shell` / `-Nodrm` / `-Debug` |
+| **`flash-recovery-linux.ps1`** | **ABL 直启刷写入口：强制备份 `recovery_a` + 哈希 + 电量检查** |
+| `flash-uefi.ps1` | 旧 UEFI 路线刷写：`-BootB` / `-Mode shell` / `-Nodrm` / `-Debug` |
 | `device-recover.ps1` | 一键恢复原厂 Android（三件套 + slot + 可选 GPT） |
 | `run-test.ps1` | 上机编排：检查→刷机→采集 USB 事件→判定→输出 JSON |
 | `pc-ncm-connect.ps1` | PC 端配 NCM 网卡并连 telnet |
