@@ -31,6 +31,10 @@ umount "$MNT"
 rmdir "$MNT"
 e2fsck -fn "$OUT" 2>&1 | tail -3
 
+# 交给调用者使用：root 创建会得到 root:root 600，改成与输入 tarball 同属主、可读
+chown "$(stat -c %u:%g "$TAR")" "$OUT" 2>/dev/null || true
+chmod 644 "$OUT"
+
 echo "[5/5] 结果"
 ls -l "$OUT"
 echo "实际占用: $(du -h --apparent-size "$OUT" | cut -f1) (稀疏，du 实占 $(du -h "$OUT" | cut -f1))"

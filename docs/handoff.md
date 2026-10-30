@@ -181,7 +181,8 @@ unpack_bootimg --boot_img /tmp/abl-nuwa.img --out /tmp/ub   # 回读校验 heade
 
 | 文件 | 大小 | sha256 |
 |---|---|---|
-| **`other/abl-nuwa-drm-v7.img`** | **17,854,464** | **`4b3845d53e4e12307f402ae39e27da3377d7f6f0dc80b8a8f93fdf6c9afb091f`（当前，刷这个）** |
+| **`other/abl-nuwa-drm-v9.img`** | **17,858,560** | **`ef0e57013381758c9b73adbcccf5638b33639d72b49a31b8ba686bc6bd0c8e75`（当前，刷这个）** |
+| `other/abl-nuwa-drm-v7/v8.img` | 17.85 MB | 早期版本（无 switch_root / 探测漏裸盘） |
 | `other/abl-nuwa-drm-v6.img` | 17,858,560 | `d7ba3eff…`（触控属性名还没修） |
 | `other/abl-nuwa-drm-v5.img` | 17,854,464 | `91f2d68f…`（dispcc 已内建，缺面板 off 序列） |
 | `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7…`（**dispcc 还是模块，会静默黑屏**） |

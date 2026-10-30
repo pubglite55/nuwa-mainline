@@ -111,6 +111,11 @@
 
 验证过：`e2fsck -fn` 干净；`debugfs` 读回 `/etc/hostname` = `nuwa`；`/sbin/init` → `../lib/systemd/systemd`。
 
+**更进一步：这套 rootfs 已在 QEMU 上真启动过**（内核用同一份 `ir-root` initramfs，临时关掉内建 DTB 构建）：
+`switch_root -> /dev/vda` → `systemd 259.9` → `Hostname set to <nuwa>` → `Reached target getty.target` →
+`Ubuntu 26.04.1 LTS nuwa ttyAMA0` / `nuwa login:`，并且 `Listening on ssh.socket` 说明 **sshd 正常**。
+详见 `status.md` §2026-10-30 QEMU 端到端验证。
+
 ### 想换大小就重新生成
 
 ```bash

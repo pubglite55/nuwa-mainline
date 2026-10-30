@@ -38,11 +38,11 @@ Get-FileHash "backup\nuwa-backup\recovery_a.img" -Algorithm SHA256
 
 ```powershell
 & "C:\Android\platform-tools\fastboot.exe" devices           # 应看到 3705933  fastboot
-& "C:\Android\platform-tools\fastboot.exe" flash recovery_a "other\abl-nuwa-drm-v7.img"
+& "C:\Android\platform-tools\fastboot.exe" flash recovery_a "other\abl-nuwa-drm-v9.img"
 & "C:\Android\platform-tools\fastboot.exe" reboot recovery
 ```
 
-`abl-nuwa-drm-v7.img` sha256 = `4b3845d53e4e12307f402ae39e27da3377d7f6f0dc80b8a8f93fdf6c9afb091f`。
+`abl-nuwa-drm-v9.img` sha256 = `ef0e57013381758c9b73adbcccf5638b33639d72b49a31b8ba686bc6bd0c8e75`。
 （v4 之前的版本有 dispcc 模块化 / reset 极性 / 序列延时问题，不要用。）
 
 ### C. 判读

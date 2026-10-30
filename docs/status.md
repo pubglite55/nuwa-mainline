@@ -105,7 +105,9 @@ PPS 是用内核 `drm_dsc_pps_payload_pack()` 的字节序逐字段解码的，�
 
 | 文件 | 大小 | sha256 |
 |---|---|---|
-| **`other/abl-nuwa-drm-v7.img`** | **17,854,464** | **`4b3845d53e4e12307f402ae39e27da3377d7f6f0dc80b8a8f93fdf6c9afb091f`（当前，刷这个）** |
+| **`other/abl-nuwa-drm-v9.img`** | **17,858,560** | **`ef0e57013381758c9b73adbcccf5638b33639d72b49a31b8ba686bc6bd0c8e75`（当前，刷这个）** |
+| `other/abl-nuwa-drm-v8.img` | 17,858,560 | `81dc0cf5…`（init 的 rootfs 探测漏了裸盘） |
+| `other/abl-nuwa-drm-v7.img` | 17,854,464 | `4b3845d5…`（没有 switch_root 能力） |
 | `other/abl-nuwa-drm-v6.img` | 17,858,560 | `d7ba3eff…`（缺触控属性名修复） |
 | `other/abl-nuwa-drm-v4.img` | 17,854,464 | `c97ff6f7eb79bfc3def4686c26637d8b8732f45eeec2b6ae27161e2ec5b9d339`（dispcc 仍是模块） |
 | `other/abl-nuwa-drm-v5.img` | 17,854,464 | `91f2d68f2a34aba6d950cacf5ec2120b4fc4d0dadc24798c28780ebdf5d17445`（dispcc 已内建，缺 off 序列） |
@@ -127,6 +129,44 @@ PPS 是用内核 `drm_dsc_pps_payload_pack()` 的字节序逐字段解码的，�
 
 > 唯一没设的是 `mode.type` 里的 `DRM_MODE_TYPE_PREFERRED`。面板只报一个模式，connector 必然选它，
 > 所以不影响点亮；等以后加多刷新率时再补。
+
+### 2026-10-30 QEMU 端到端验证：内核 → initramfs → rootfs → systemd 全链跑通
+
+设备不在手，但用户空间这半条链可以在 QEMU 上真跑。做法：
+
+1. 临时关掉 `CONFIG_NUWA_FORCE_BUILTIN_DTB`（否则内核强制用 nuwa 内建 DTB，QEMU virt 起不来），
+   单独构建一个 `Image`，构建后立刻把 `.config` 还原；
+2. `qemu-system-aarch64 -M virt -cpu max -m 2048 -smp 2 -kernel Image \
+   -drive file=nuwa-rootfs-8g.img,if=virtio,format=raw -nographic`；
+3. 内核自带的 initramfs（`ir-root`）扫描块设备 → 找到 ext4 + `/etc/os-release` → `switch_root`。
+
+实测日志（`qemu-boot4.log`，670 行）：
+
+```
+[    1.565980] nuwa-init: bound to /dev/kmsg
+[   12.080237]    found rootfs on /dev/vda: PRETTY_NAME="Ubuntu 26.04.1 LTS" NAME="Ubuntu"
+[   12.112893] nuwa-init: switch_root -> /dev/vda
+[   13.176922] systemd[1]: systemd 259.9-0ubuntu0.1 running in system mode
+[   13.177921] systemd[1]: Detected architecture arm64.
+[   13.232234] systemd[1]: Hostname set to <nuwa>.
+Welcome to Ubuntu 26.04.1 LTS!
+Reached target getty.target - Login Prompts.
+Ubuntu 26.04.1 LTS nuwa ttyAMA0
+nuwa login:
+```
+
+同一份日志里 SSH 也起来了：
+
+```
+Listening on ssh.socket - OpenBSD Secure Shell server socket.
+Finished sshd-keygen.service - Generate sshd host keys on first boot.
+```
+
+结论：**initramfs 的 switch_root 逻辑、rootfs 的 fstab/hostname/systemd/sshd 全部可用**，
+唯一没在 QEMU 里验证的是 nuwa 专有硬件（UFS 上真实的 `linux` 分区、MSM 显示、触控）。
+
+顺带修掉一个真 bug：init 里原来按 `/dev/vd*[0-9]*`（分区名）匹配，**裸盘 `/dev/vda` 匹配不到**，
+已改成整盘与分区都试。
 
 ## 2026-10-29 突破：内核首次真机启动
 

@@ -30,7 +30,7 @@ Mu UEFI 路线冻结为回退方案。内核 + 设备树 + 原生 MSM 显示驱�
 
 | 文件 | 大小 | 内容 | 刷到 |
 |---|---|---|---|
-| **`abl-nuwa-drm-v7.img`** | 17.85 MB | **ABL 直启：boot.img v1，Image.gz + 诱饵 DTB，原生 MSM 显示 + 触控（dispcc 内建、面板 off 序列、触控属性名修正）** | `recovery_a` |
+| **`abl-nuwa-drm-v9.img`** | 17.86 MB | **ABL 直启：boot.img v1，Image.gz + 诱饵 DTB，原生 MSM 显示 + 触控 + 自动 switch_root 到 rootfs** | `recovery_a` |
 | `uefi-nuwa/Mu-nuwa.img` | 2.13 MB | UEFI 固件 RELEASE（回退） | `boot_a` |
 | `uefi-nuwa-debug/Mu-nuwa.img` | 2.25 MB | UEFI DEBUG（屏幕打印卷扫描） | `boot_a` |
 | **`payload-bootb.img`** | 192 MiB | **4 KiB FAT16**，卷标 NUWAESP，nodrm 内核 | `boot_b` |
