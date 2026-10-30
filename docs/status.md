@@ -553,6 +553,33 @@ crtc active、背光 4095、fbcon 画布、`fb0/blank=0`。
 - 路线 A：从 Lineage 内核源码构建（把 `DRM_MSM` 等做成内建），最可控，但需要克隆 + clang 工具链 + 编译
 - 路线 B：直接用 Lineage 的 5.15 GKI 内核 + 从 2.2 GB ROM 里提取 `vendor_dlkm` 模块，在 initramfs 里 insmod
 
+### 2026-10-31 凌晨 第十二轮：Lineage 内核路线与 ABL 载入限制
+
+#### 新发现：`fastboot boot` 有 RAM 载入上限
+
+- 主线镜像（≈10 MB）走 `fastboot boot` 一直正常；
+- Lineage 内核 23–49 MB 的镜像 `fastboot boot` 直接报
+  `Failed to load/authenticate boot image: Load Error`；
+- 但**同样的镜像 `fastboot flash recovery_a` 能正常写入**。
+
+⇒ 结论：**大镜像必须走分区（recovery_a）而不能走 RAM 启动**。以后选路线时按这个来。
+
+（另：56 MB 那版曾打印 `Booting OKAY`，但那只是 ACK，随后设备自己退回 fastboot —— 不能用它当作「载入成功」的证据。）
+
+#### Lineage 5.15 GKI 内核首测
+
+镜像 L3 = `gzip(Lineage kernel 22.1 MB)` + 诱饵 DTB(930 KB) + 我们的 ramdisk(1.0 MB)，写入 `recovery_a` 后 `reboot recovery`：
+**无 USB 枚举、无 COM 口，设备落回 fastboot** ⇒ 该内核没能起来（其显示/USB 都是模块，缺 `vendor_dlkm`）。
+
+已回刷原厂 `recovery.official.img` 并确认设备回到 Android（`adb devices` = device）。
+
+#### 并行推进（子代理）
+
+- 路线 A：从 `LineageOS/android_kernel_xiaomi_sm8550` 自建内核（显示/USB 内建）
+- 路线 B：下载 2.2 GB ROM → 提取 `vendor_dlkm.img` → 得到 5.15.220 配套模块，塞进 ramdisk 里 insmod
+
+initramfs 的 `/init` 已升级：会读 `/lib/modules/$(uname -r)/nuwa-load.list` 或 `modules.dep` 按序 insmod（内建内核自动跳过）。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
