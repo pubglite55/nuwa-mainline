@@ -222,7 +222,10 @@ v7 修掉触控 DTS 属性名（厂商驱动读单数 `fts,irq-gpio`/`fts,reset-
 9. 音频：ADSP + 双 CS35L41（I2C `0x40`/`0x42`）+ WCD938x。
    **fuxi 的实机结果证明「PIL 禁用 ⇒ 音频不可达」是错的**（那是 UEFI 的限制，ABL 路线没有）。
    参考 `tech-debt.md` TD-07 需要重写结论。
-10. 根文件系统：fuxi 用独立 `linux` 分区（sda33）。nuwa 需要自己决定落在哪个分区（**动分区表要先问用户**）。
+10. 根文件系统：**见 [rootfs-plan.md](rootfs-plan.md)**（已实测 nuwa 的 GPT）。
+    关键事实：nuwa 主盘**没有任何空闲空间**，`userdata` 从 LBA 3110976 一直到盘尾 224 GiB；
+    可选方案 = A 缩 userdata 新建 `linux`（要用户同意）/ B 外接 USB-C 盘（零风险，要改 `dr_mode`）/ C 先拿 `cust` 2 GB 试最小系统。
+    ⚠️ 不要想着「在 userdata 里放个镜像文件」——userdata 是 FBE 加密的，Linux 读不到。
 11. Ubuntu 26.04 + GNOME 用户空间、双系统切换入口。
 #### P2 的「内建化」清单（当前全是模块，必须先改 `=y`）
 

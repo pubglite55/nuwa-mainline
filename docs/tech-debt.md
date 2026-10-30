@@ -133,6 +133,18 @@
 | 去掉条件 | 验证「主线 DTB + 正确 id + dtbo overlay」能正常跳转后撤销 |
 | 关联文档 | `abl-direct-boot.md` §为什么要「诱饵 DTB」 |
 
+### TD-12 面板四路供电被设成 always-on，熄屏/休眠无法真正断电
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | `display_avdd` / `display_vci` / `display_vddio` / `display_vddd` 都带 `regulator-boot-on` + `regulator-always-on` |
+| 位置 | `arch/arm64/boot/dts/qcom/sm8550-xiaomi-nuwa.dts` |
+| 为什么暂时需要 | 首次点亮前不想同时改「供电所有权」和「显示链路」两个变量；先保持上电现状，确认面板能亮 |
+| 正确做法 | 去掉 `always-on`（保留 `boot-on`），让 `panel-nuwa-m2` 的 `regulator_bulk_enable/disable` 真正掌握上电时序 |
+| 影响与风险 | `unprepare()` 里的断电变成空操作；熄屏后仍有静态功耗；休眠功耗会明显偏高 |
+| 去掉条件 | 屏幕点亮且 `unprepare` 路径验证过（能正常关屏再亮屏） |
+| 关联文档 | `abl-direct-boot.md`、`rootfs-plan.md` |
+
 ---
 
 ## 已还

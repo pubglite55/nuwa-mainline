@@ -18,6 +18,7 @@ Mu UEFI 路线冻结为回退方案。内核 + 设备树 + 原生 MSM 显示驱�
 | [uefi-route.md](uefi-route.md) | 旧 UEFI 路线原理、14 轮验证记录（已冻结） | 想理解为什么换路线 |
 | [troubleshooting.md](troubleshooting.md) | 故障排查决策树（6 类现象 → 判据 → 行动） | 出问题时 |
 | [install-plan.md](install-plan.md) | 三阶段路线（验证 → 部署 Ubuntu → 桌面/双系统） | 规划后续 |
+| [**rootfs-plan.md**](rootfs-plan.md) | **实测 GPT 分区表 + rootfs 放哪的三方案（需用户决策）** | 显示点亮后马上要用 |
 | [panel-params.md](panel-params.md) | 面板参数 | 做原生显示接管时 |
 | [peripherals.md](peripherals.md) | 外设对照 | 做外设时 |
 | [**tech-debt.md**](tech-debt.md) | **技术债表（9 条未还、1 条已还，按影响排序）** | **每次用临时做法时必须登记** |
