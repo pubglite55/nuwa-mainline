@@ -580,6 +580,32 @@ crtc active、背光 4095、fbcon 画布、`fb0/blank=0`。
 
 initramfs 的 `/init` 已升级：会读 `/lib/modules/$(uname -r)/nuwa-load.list` 或 `modules.dep` 按序 insmod（内建内核自动跳过）。
 
+### 2026-10-31 凌晨 第十三轮：与 fuxi 逐项对比 + Lineage 路线取证受阻
+
+#### fuxi（同代 SM8550，主线显示已通）对比结论
+
+| 项 | fuxi | 我们（nuwa） | 判断 |
+|---|---|---|---|
+| 复位脚 | `<&tlmm 133 GPIO_ACTIVE_LOW>`，驱动 `direction_output(1)`→`set(0)`，物理：低 1ms → **高** 10ms | `GPIO_ACTIVE_HIGH`，驱动 `set(0)`→`set(1)`，物理：低 1ms → **高** 10ms | **完全一致，不是问题** |
+| `&mdss` iommus | `<&apps_smmu 0x1c00 0x2>` | 基树自带，编译后 DTB 里确实是 `3c 1c00 2` | **一致** |
+| `mdss_dsi0_out` | `data-lanes = <0 1 2 3>` | 同 | 一致 |
+| DSI 标志 | `CLOCK_NON_CONTINUOUS + DSC_ALL_SLICES_IN_PKT`，lanes=4 | 同 | 一致 |
+| 面板 | `xiaomi,fuxi-m3-38-0c-0a`（1080×2400，8bpc） | `samsung,amb673cp01-m2`（1440×3200，10bpc） | 面板本身不同 |
+
+结论：**主线侧的显示配置与 fuxi 没有实质差异**，面板仍不回 DCS 读（`-61 ENODATA`），
+说明问题不在这些可对比的 DT/驱动参数上（已排除 6+1 项），继续在主线里盲调性价比很低。
+
+#### Lineage 路线（B）的进展与障碍
+
+- 已确认 **Lineage 5.15 内核 + 我们的 initramfs 确实会执行**：用「3 秒后主动 panic」的探针镜像，
+  设备表现为**一开机就重启**（ABL 反复重试 recovery），这正是探针生效的证据。
+- 但 **pstore 拿不到日志**：本机崩溃日志走 `block2mtd=/dev/block/sda16` + `mtdoops`（见 Android cmdline），
+  不是 ramoops，所以 `/sys/fs/pstore` 为空。
+- 加载全部 49 个模块（显示+USB）→ **内核崩溃重启循环**；只加载 14 个 USB 模块 → 不崩但 USB 不枚举。
+  需要日志才能定位，因此改用**分区落盘**：L9 镜像会加载 USB+UFS 模块，把 insmod 结果与 dmesg 写进
+  `crash_history`(sda20)，然后自动关机。
+- 分区标签已取全：`cust -> sda30`（2 GB）、`crash_history -> sda20`、`dbg -> sda3` 等。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
