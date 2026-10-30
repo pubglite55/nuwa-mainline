@@ -112,6 +112,22 @@ PPS 是用内核 `drm_dsc_pps_payload_pack()` 的字节序逐字段解码的，�
 | `other/abl-nuwa-drm-v3.img` | 17,854,464 | `8af2181d887ab6defcdca48fff6f85366c4c01dd819c15a5a4a9813b6929ff27`（旧 initramfs） |
 
 
+### 离线核对第二轮（2026-10-30 补）
+
+| 检查项 | 结果 | 说明 |
+|---|---|---|
+| DSC 尺寸合法性 | ✅ | `msm_dsi_host_check_dsc()`：1440 % 720 = 0、3200 % 25 = 0 → `MODE_OK` |
+| DSC 参数填充时机 | ✅ | `dsi_populate_dsc_params()` 在 `dsi_timing_setup()`（modeset 时）调用，`pic_width/height` 用 mode 覆盖 |
+| 命令模式包数 | ✅ | `pkt_per_line = 2/2 = 1`，`eol_byte_num = 1440 % 3 = 0` |
+| LPM 传递 | ✅ | `drm_mipi_dsi.c:457` 自动加 `MIPI_DSI_MSG_USE_LPM`；`dsi_host.c:2200` 据此设 TX 低功耗 |
+| USB gadget 前提 | ✅ | DTB：`usb@a600000` = okay、`phy@88e3000`（HS phy）= okay；`dr_mode = "peripheral"` |
+| initramfs 工具 | ✅ | busybox 是 **aarch64 静态**二进制，`ip/telnetd/dd/insmod/mount/grep/...` 全在 |
+| 面板驱动结构 | ✅ | `prepare_prev_first = true`、`GPIOD_ASIS`、`hs_rate`、`mode_flags`、`devm_*` 全按 fuxi 模式 |
+| 诱饵 DTB 完整性 | ✅ | 镜像 kernel 字段尾部逐字节等于 `private/nuwa-bait.dtb`（930,579 B） |
+
+> 唯一没设的是 `mode.type` 里的 `DRM_MODE_TYPE_PREFERRED`。面板只报一个模式，connector 必然选它，
+> 所以不影响点亮；等以后加多刷新率时再补。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
