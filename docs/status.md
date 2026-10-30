@@ -64,6 +64,10 @@ Android boot.img（header v1）`，内核字段是 `Image.gz + 厂商 DTB`，ini
 | `line_buf_depth` | 0xB = 11 | 主线自动 `bpc+1 = 11` | ✅ |
 | `convert_rgb` / `block_pred` | 1 / 1 | 主线强制 1 / 驱动置 1 | ✅ |
 | `rc_buf_thresh` | 14,28,…,126 | 主线表同 | ✅ |
+| `slice_chunk_size` | 720 | 主线 `720*128/(8*16) = 720` | ✅ |
+| `rc_model_size` / `initial_offset` | 8192 / 6144 | 主线常量同 | ✅ |
+| 每行包数（`pkt_per_line`） | 2 slice / 2 slice-per-pkt = 1 | `DSC_ALL_SLICES_IN_PKT` → 1 | ✅ |
+| `eol_byte_num` | (720×2) % 3 = 0 | 同 | ✅ |
 | `first_line_bpg_offset` | 13 | 主线 12 | ⚠️ 差异（TD-10） |
 | RC range max_qp（个别档） | 8/14/15/16/17 | 4/15/16/17/19 | ⚠️ 差异（TD-10） |
 
