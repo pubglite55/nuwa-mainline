@@ -370,6 +370,67 @@ v14（USB 三处修复 + 新 init，含 180 秒安全重启）刷入引导后，
 设备在 v15min 引导后挂死（无 USB），需要人工**长按电源 20 秒**再按「音量下 + 电源」进 fastboot，
 才能刷入复位桩验证 ABL 交接。
 
+### 2026-10-30 深夜 第六轮：分级复位桩锁定故障段（重大进展）
+
+#### 方法
+
+新增 `CONFIG_NUWA_STUB_STAGE`（0–9），在启动路径上埋点，命中即在原地发 PSCI `SYSTEM_RESET`：
+被复位 ⇒ 这一段跑通了；不复位 ⇒ 卡在这一段之后。用 `fastboot boot`（不写分区）迭代，复位后自动回 Android。
+
+#### 结果
+
+| stage | 埋点位置 | 结果 |
+|---|---|---|
+| 1 | `setup_arch()` 第一行 | ✓（先证 ABL 确实跳到我们的代码：无限重启） |
+| 2 | `setup_arch()` 结尾（`smp_build_mpidr_hash` 后） | ✓ 复位成功 |
+| 3 | `mm_core_init()` 之后 | ✓ |
+| 4 | `smp_init()` 之后 | ✓ |
+| 5 | `run_init_process()` 之前（`async_synchronize_full()` 之后） | ✗ **卡住** |
+
+结论：**内存、MM、SMP 全部正常**，卡在 `kernel_init_freeable()` → `async_synchronize_full()` 这一段，
+也就是「initramfs 解包 / `/dev/console` / 等异步 probe」之间。
+`async_synchronize_full()` 会一直等所有异步 probe 收尾，**任何一个驱动卡住都会让它永远不返回** ——
+这也同时解释了为什么 USB、显示都没起来：`/init` 根本没被执行。
+
+#### 下一步
+
+在 `kernel_init_freeable()` 内继续细分：stage 6 入口、7 initramfs 解包后、8 `console_on_rootfs` 后、9 `async_synchronize_full` 后。
+找出到底是解包卡住、还是某个异步 probe 卡住。
+
+### 2026-10-30 深夜 第七轮：分级结果与关键推论（rdinit 没传到内核）
+
+#### 分级复位桩完整结果
+
+| stage | 埋点 | 结果 |
+|---|---|---|
+| 1 | `setup_arch()` 第一行 | ✓ |
+| 2 | `setup_arch()` 结尾 | ✓ |
+| 3 | `mm_core_init()` 后 | ✓ |
+| 4 | `smp_init()` 后 | ✓ |
+| 6 | `kernel_init_freeable()` 入口 | ✓ |
+| 7 | `wait_for_initramfs()` 后（initramfs 解包完成） | ✓ |
+| 8 | `console_on_rootfs()` 后 | ✓ |
+| 9 | `async_synchronize_full()` 后 | ✓ |
+| **5** | `run_init_process(ramdisk_execute_command)` 之前 | ✗ **钩子没执行** |
+
+注意 stage 5 的第一版是假阳性：`nuwa_stub_reset` 标了 `__init`，而 stage 5 在 `free_initmem()` 之后，
+踩了 fuxi 文档里记的 use-after-free 假死坑。去掉 `__init` 重测仍然不执行 ⇒ **不是假阳性**。
+
+#### 关键推论：`rdinit=/init` 没有进到内核
+
+stage 5 的埋点在 `if (ramdisk_execute_command) { ... }` 块内部；钩子没执行 ⇒ **`ramdisk_execute_command` 为 NULL** ⇒
+ABL 传给内核的 cmdline 里**没有 `rdinit=/init`**（我们用 `CONFIG_CMDLINE_FROM_BOOTLOADER=y`，完全依赖 ABL 传参）。
+
+于是 `kernel_init` 按回退列表找 init：`/sbin/init` → `/etc/init` → `/bin/init` → `/bin/sh`。
+我们 initramfs 里只有 busybox，`/bin/sh` 会被当成 init 跑起来，而它没有控制台可用 ⇒ **就那么挂着**：
+没有 USB（我们的 `/init` 从没执行，gadget 没建）、不会 300 秒重启（安全网也没执行）、屏幕停在第一屏。
+这与真机现象完全吻合。
+
+#### 修复方向（正在验证）
+
+不再依赖 ABL 传参：`CONFIG_CMDLINE_FORCE=y` + `CMDLINE="console=tty0 loglevel=8 rdinit=/init"`，
+构建 `other/abl-nuwa-rdinit-v17.img`。若 USB 出现（`1D6B:0104` / ACM / NCM），说明整条链就通了。
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
