@@ -521,6 +521,38 @@ ABL 传给内核的 cmdline 里**没有 `rdinit=/init`**（我们用 `CONFIG_CMD
 主机侧（DRM/DSI/DPU/时钟/供电/复位）已经全部就绪，问题收敛到 **面板协议层**：
 或初始化序列内容与我们解析的 blob 不一致，或该面板的读通道需要 HS 模式。下一步实验方向已明确。
 
+### 2026-10-31 凌晨 第十一轮：主线显示到顶，转向 Lineage 参照
+
+#### 已排除（v23–v26）
+
+| 假设 | 做法 | 结果 |
+|---|---|---|
+| 大初始化序列解析错 | 与厂商 `qcom,mdss-dsi-on-command` 逐字节比对 | **977 字节完全一致** |
+| 序列把我们搞死 | 最小初始化（只 0x11 + 0x29） | 面板仍不回话 |
+| 上电时序 | 按厂商 vddio+1ms → vddd+1ms → vci+10ms 逐路上电 | 仍不回话 |
+| LP 命令读不到 | 改 HS 模式读 | 仍 `-61 ENODATA` |
+| 时钟 lane 常开 | 加 `MIPI_DSI_CLOCK_NON_CONTINUOUS` | 仍不回话 |
+| DSI 接错 | 厂商树确认 `dsi-ctrl-num=0 / dsi-phy-num=0` | 我们用的就是 DSI0 ✓ |
+
+已确认正常的：供电三路 GPIO（66/126/127）、复位 133、DSI 时钟（1.36 GHz VCO / 170 MHz byte / 226.67 MHz pixel）、
+crtc active、背光 4095、fbcon 画布、`fb0/blank=0`。
+
+#### 拿到的 Lineage 参照
+
+- `LineageOS/android_kernel_xiaomi_sm8550-devicetrees` → `/home/l1872/nuwa/sm8550-devicetrees`
+  - `qcom/display/display/dsi-panel-m2-38-0c-0a-dsc-cmd.dtsi`（本机面板官方定义）
+  - `qcom/display/display/nuwa-sde-display-mtp.dtsi`（供电表、reset gpio 133、`bl_ctrl_dcs` + inverted dbv）
+  - **`qcom,display-topology = <2 2 1>`**（2 mixer + 2 DSC + 1 intf，双 DSC）
+- LineageOS 构建产物（`other/lineage/`）：`boot.img` 192 MB、`vendor_boot.img` 96 MB
+  - 内核 = **Android GKI 5.15.220**（`#1 SMP PREEMPT`，clang 22）
+  - **显示不在内核里**：`strings kernel | grep msm_drm` = 0，模块在 vendor_ramdisk/vendor_dlkm 中
+  - `vendor_boot` 内含 8.1 MB 的 dtb 与 12.7 MB 的 `vendor_ramdisk00`（LZ4）
+
+#### 待决策
+
+- 路线 A：从 Lineage 内核源码构建（把 `DRM_MSM` 等做成内建），最可控，但需要克隆 + clang 工具链 + 编译
+- 路线 B：直接用 Lineage 的 5.15 GKI 内核 + 从 2.2 GB ROM 里提取 `vendor_dlkm` 模块，在 initramfs 里 insmod
+
 ## 2026-10-29 突破：内核首次真机启动
 
 ### 根因一：breadcrumb 写了一个不存在的物理地址
