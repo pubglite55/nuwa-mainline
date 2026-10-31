@@ -71,6 +71,58 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 22:30 触控协议实验：IER 写入消除了报错，但仍无触摸事件
+
+#### 已取到厂商资源
+
+| 资源 | 位置 |
+|---|---|
+| 触控固件 `st_fts_m2.ftb`（138,416 B）| 从 Android `/odm/firmware/` 拉取 → `private/st_fts_m2.ftb` |
+| 厂商触控驱动源码 | `/home/l1872/nuwa/lineage-modules-a/qcom/opensource/touch-drivers/st/` |
+
+固件头解析（说明**不需要刷固件**）：
+
+```
+55 aa 55 aa          magic
+36 40 00 00          chip 0x4036 (= 3640，与设备一致)
+18 00 00 00          fw  0x18  → 与芯片自报 fw 0018 相同
+22 00 00 00          cfg 0x22  → 与芯片自报 cfg 0022 相同
+```
+结论：芯片内运行的固件/配置与厂商文件完全一致，缺的不是固件。
+
+#### 协议对比
+
+| 项 | 主线 `st-ftm5.c` | 厂商驱动 |
+|---|---|---|
+| 读事件 | `0x87` | `FIFO_CMD_READONE = 0x85` / `READALL = 0x86` |
+| 开扫描 | `{0xa0, 0x00, 0x01}` | 写寄存器 `{0xB6, 0x00, 0x2C, 0x41}`（IER_ADDR=0x2C, IER_ENABLE=0x41）|
+| 寄存器访问 | 无 | `FTS_CMD_HW_REG_W/R = 0xB6` |
+| 帧缓冲 | `0xa7` | `FTS_CMD_FRAMEBUFFER_R/W = 0xD0` |
+
+#### 实验结果（各一次单变量）
+
+| 版本 | 改动 | 结果 |
+|---|---|---|
+| v112 | `0x85` 读事件 + IER 写 | **probe 失败** `-110: controller did not become ready` ⇒ 0x85 不适用 |
+| v113 | `0x87` 读事件 + IER 写 | probe 正常、`error event` **归零**，但**触摸仍无任何输入事件** |
+| v110/v111 | `0x87` + `{0xa0,0,1}` | 持续 `error event f3 12 ...`（约 18 次/秒），无触摸事件 |
+
+#### 判断
+
+- `0x87` 是这块芯片正确的事件读命令（0x85 直接 probe 失败）
+- IER 写入（`0xB6 00 2C 41`）让芯片不再报错，但也**没有开始上报触摸**
+- 说明主线的 8 字节事件格式与厂商协议**不一致**：厂商的事件结构/解析在 `fts_lib/` 里，
+  主线驱动是另一套（按 `type=0x13/0x23/0x33` 解析），两者对不上
+
+#### 建议路线（不再靠猜协议）
+
+**把厂商驱动编成外挂模块**：`fts.c` + `fts_lib/` → `fts_ts.ko`。
+它是本机 Android 上真正在跑的驱动，协议、配置、上报格式都匹配。需要适配：
+
+1. SPI/GPIO/regulator 的 DT 绑定（厂商用 `st,spi` + `fts,*` 属性，可保留）
+2. 输入子系统接口（`input_dev` 注册、MT-B 上报）
+3. 内核 API 版本差异（`7.3` vs 厂商 `5.x/6.x`）
+
 ## 2026-10-31 22:10 按键事件链路不通 + 触控根因（需厂商固件）
 
 #### 按键：内核层完全不产生事件（不是映射问题）
