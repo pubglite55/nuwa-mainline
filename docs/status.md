@@ -102,6 +102,53 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 02:30 触控调试改为「分阶段 + 网络通道」，摆脱串口依赖
+
+#### 问题：串口彻底不可用
+
+宿主侧 `COM5` 枚举正常但 `Open()` 报 ERROR_GEN_FAILURE（设备端 ACM 停在 stall）。
+已试：停用/启用子设备、重枚举父设备、NCM 链路本地探测 —— 均无效。
+主机非管理员，无法添加网段地址（`New-NetIPAddress`/`netsh` 均被拒绝）。
+
+#### 方案一：设备侧改用链路本地地址（免主机提权）
+
+`/init` 给 `usb0` 增加 **169.254.10.2/16**（与主机 169.254.5.86/16 同网段），
+保留 telnetd（:23）。rootfs 里本来就有 `sshd` + `10-usb0.network`（169.254.10.2/16），
+两条通道只需设备开机即可用。
+
+#### 方案二：厂商触控驱动改为运行时分阶段（核心工具）
+
+新增模块参数 `nuwa_stage`（0..4），`/init` 从 cmdline `nuwa_ts=N` 读取并传给 `insmod`：
+
+| stage | 放开到哪一步 | 目的 |
+|---|---|---|
+| 0 | 仅入口打印，立即 `-ENODEV` | 验证“加载模块本身无害” |
+| 1 | DT 解析 / panel notifier 之后 | 验证 DT 解析无害 |
+| 2 | `fts_set_gpio` + `fts_pinctrl_init` 之后 | 验证 GPIO/pinctrl |
+| 3 | `fts_get_reg` + `fts_enable_reg` 之后 | 验证 regulator |
+| 4 | 完整 probe | 正常 |
+
+**好处：改 cmdline 即可换阶段，不必重新编译**（`fastboot boot` 时可带 `--cmdline`）。
+
+同时按 skill 建议补了两处：
+
+- `info->input_dev->dev.parent = &client->dev;`（避免 `touchscreen_parse_properties()` 空指针）
+- `nuwa_fts_ready = true` 放在 `input_register_device()` 之后（中断只在注册完成后才放行）
+
+#### 产物
+
+| 镜像 | 说明 |
+|---|---|
+| `other/abl-nuwa-v125-netll.img` | init 加链路本地地址 |
+| `other/abl-nuwa-v126-stage0.img` | 链路本地 + stage 分阶段（cmdline `nuwa_ts=0`）|
+
+`private/nuwa-net.ps1`：基于原始 TCP 的 telnet RPC 工具（自动剥离 IAC 协商），
+用法 `& nuwa-net.ps1 -Cmd "dmesg | tail -30"`。
+
+#### 阻塞
+
+设备当前停在 v124（串口与网络均不可达），需要物理进入 fastboot 才能继续。
+
 ## 2026-11-01 02:00 厂商驱动崩溃排查：中断上下文空指针 + gadget 损坏
 
 #### 决定性证据（用户从屏幕抄下的 panic）
