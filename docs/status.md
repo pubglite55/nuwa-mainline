@@ -71,6 +71,37 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-11-01 00:50 厂商驱动 probe 挂死排查（进行中）
+
+#### 现象
+
+- v120（自动加载 fts_ts.ko）：串口失联，USB gadget 仍在枚举
+- v121（自动加载 + 32 个 `NUWA_PROBE_STEP` 日志）：同样失联
+
+#### 排查方法（已验证有效，下次可直接用）
+
+**必须从启动瞬间就开始捕获串口**，事后再连接已经来不及（gadget 已死）：
+
+```powershell
+# 1) 后台开串口持续读取 90 秒，写入文件
+# 2) 立刻 fastboot boot <img>
+# 3) 读捕获文件看最后一条 NUWA_PROBE_STEP
+```
+
+#### 已排除的坑
+
+- **chroot 后 `/lib/modules` 是 rootfs 的**，不是 initramfs 的。
+  所以在系统里 `ls /lib/modules/7.3.0/` 看不到放进 initramfs 的 `fts_ts.ko`。
+  想在运行系统里手动 insmod，必须把 .ko 放进 rootfs 镜像（rs4b.img）并重新刷写。
+- initramfs 里的 `/init` 会遍历 `$MODDIR/*.ko` 自动 insmod，
+  所以复制的模块名要带 `.manual` 之类后缀才不会自动加载。
+
+#### 下一步
+
+1. 用「先抓串口再启动」的方式跑一次 v121，定位挂死的那一步编号
+2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
+3. 补齐 DT 属性或加保护后重试
+
 ## 2026-11-01 00:20 **厂商触控驱动移植成功（编译层面）**
 
 #### 成果
