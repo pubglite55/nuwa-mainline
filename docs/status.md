@@ -3,6 +3,56 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 12:15 **Ubuntu 26.04 在 nuwa 上跑起来了**
+
+```
+Welcome to Ubuntu 26.04.1 LTS (GNU/Linux 7.3.0+ aarch64)
+Linux nuwa 7.3.0+ #73 SMP PREEMPT aarch64 GNU/Linux
+uid=0(root)   Static hostname: nuwa   Chassis: handset
+root@nuwa:~#
+```
+
+#### 分区改造（方案 A，用户批准）
+
+| 分区 | 变化 |
+|---|---|
+| `linux` | **新建 32 GiB**（LBA 53462011–61850618），刷入 Ubuntu rootfs |
+| `userdata` | 229 GiB → **192 GiB**，Android 仍可正常启动 |
+
+安全措施（全部做过）：
+
+1. 改前现场转储完整 GPT：`private/gpt-head-now.bin` / `gpt-tail-now.bin`
+2. 新表与原表逐条目比对，**只有 userdata 结束位置变化**，其余 31 项逐字节一致
+3. 写入后回读，主表 + 备份表哈希完全一致，CRC32 全部正确
+4. 条目表 32 → 128 项（原表已占满，必须扩容；利用 LBA3–5 的空闲扇区）
+
+#### rootfs 部署
+
+- 源镜像：`nuwa-rootfs-8g.img`（6 GiB，QEMU 已验证）→ 缩到 4 GiB（`e2fsck` + `resize2fs`）
+- `fastboot flash linux` 直接失败（`std::bad_alloc`，fastboot 会把整镜像读进内存）
+  ⇒ 改用 **sparse 镜像**（`private/simg-gen.py` 自己写的转换器），455 MiB，14 秒刷完
+- root 密码设为 `nuwa`（debugfs 改写 `/etc/shadow`）
+
+#### init 的两个关键修复
+
+| 问题 | 修法 |
+|---|---|
+| `switch_root` 失败会清空 initramfs，机器只剩空根、无法自救 | 改用 **`chroot`**，initramfs 保留 |
+| init 在 ttyGS0 上常驻 shell，与 systemd 的 `serial-getty@ttyGS0` 抢 tty | shell 派生移到 rootfs 探测**之后** |
+
+#### 产物
+
+| 文件 | 大小 | sha256 |
+|---|---|---|
+| `other/abl-nuwa-v73-ubuntu.img` | 12,935,168 | `5ca5661c…` |
+| `other/nuwa-rootfs-pw.simg` | 455 MiB | 已刷入 `linux` |
+
+#### 下一步
+
+1. 桌面（GNOME/Phosh）——需要网络装包
+2. 网络（Wi-Fi WCN6856，需固件）
+3. 触控（已暂停，现在有 journal 可以查了）
+
 ## 2026-10-31 11:15 触控：找到三层问题，第 3 层仍未解决
 
 #### 已修
