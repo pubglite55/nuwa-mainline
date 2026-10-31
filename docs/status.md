@@ -3,6 +3,23 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 17:10 修电池属性刷屏（ADSP 结构体大小不匹配）
+
+现象：dmesg 每秒刷 `invalid payload length for 0x13 request: 132` + `time_to_full_avg ... -110`。
+
+根因：厂商 ADSP 固件返回的**属性回包结构比主线预期大**（132 B，正好等于 `strval` 结构：
+`__le32 result + char value[128]`），而驱动按 `intval`（8 B）严格校验 ⇒ 判为非法、置 `-ENODATA`，
+上层轮询每秒重试一次。
+
+修法（`drivers/power/supply/qcom_battmgr.c`）：把 4 处长度校验从 `!=` 改成 `<`，宽容接受更大回包：
+
+```c
+if (payload_len < sizeof(resp->strval))   /* 原 != */
+if (payload_len < sizeof(resp->intval))   /* 原 != ，共 3 处 */
+```
+
+产物：`other/abl-nuwa-v93-battfix.img` 35,758,080 B `887fa996…`（未启用 ath11k，属稳定版）
+
 ## 2026-10-31 17:05 Wi-Fi 固件升级为上游版本（v92，待测）
 
 之前用的是 Android `/vendor/firmware_mnt/image/kiwi/` 里的厂商固件，加载后整机会硬挂。
