@@ -71,6 +71,49 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-11-01 00:20 **厂商触控驱动移植成功（编译层面）**
+
+#### 成果
+
+`fts_spi`（20,456 行）成功编成外挂模块，**只改了 6 处 API**：
+
+```
+fts_ts.ko  445,400 字节
+```
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | `../xiaomi/xiaomi_touch.h` 缺失 | 把厂商 `xiaomi/` 目录一并复制 |
+| 2 | `vmalloc`/`pinctrl_*` 隐式声明 | 加 `<linux/vmalloc.h>`、`<linux/pinctrl/consumer.h>` |
+| 3 | `class_create(THIS_MODULE, name)` | 改为单参 `class_create(name)` |
+| 4 | `remove` 返回 int | 改 void，`return X;` → `return;` |
+| 5 | `<stdarg.h>` 不存在 | 改 `<linux/stdarg.h>`（7 个文件）|
+| 6 | `spi_device->master->flags` | 改 `->controller->mode_bits` |
+| 7 | `strlcpy` / `sched_setscheduler_nocheck` 已移除 | 改 `strscpy` / `sched_set_fifo` |
+
+构建脚本：`private/tsport_*.sh`；产物 `/home/l1872/nuwa/tsmod2/`。
+
+#### 集成
+
+- 设备树触控节点改为 `compatible = "st,spi"` + 全套厂商属性
+  （`fts,irq-gpio` / `fts,reset-gpio` / `fts,pwr-reg-name` / `fts,default-fw-name` / `fts,x-max` / `fts,y-max` …）
+- `fts_ts.ko` 放进 initramfs `/lib/modules/7.3.0/`（`/init` 会自动 insmod）
+- `st_fts_m2.ftb` 放进 initramfs `/lib/firmware/`
+
+#### 踩到的坑（重要）
+
+1. `make Image.gz` **不会重建 DTB**。改完 DTS 必须单独 `make qcom/sm8550-xiaomi-nuwa.dtb`，
+   并 `touch arch/arm64/kernel/nuwa_dtb.S` 让内建 DTB 重新嵌入，否则设备树改动不生效。
+   证据：`/sys/bus/spi/devices/spi2.0/modalias` 一直是 `spi:ftm5`（旧值）。
+2. SPDX/OF 匹配：只有 `of_match_table` 没有 `spi_device_id` 时，
+   日志会打 `SPI driver fts has no spi_device_id for st,spi`，但 OF 匹配本身是有效的。
+
+#### v120 状态
+
+v120 = 正确 DTB + 厂商模块 + 固件。启动后串口失去响应（COM5 无法打开），
+怀疑 **FTS probe 过程中内核挂死**（DT 属性不全导致空指针）。
+待恢复后需要：给 probe 加分段日志定位挂在哪一步。
+
 ## 2026-10-31 23:45 找到厂商 SPI 版触控驱动源码（关键突破点）
 
 #### 重大发现：本机就有设备对应的 SPI 触控驱动源
