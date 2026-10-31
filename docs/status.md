@@ -71,6 +71,47 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 17:35 关键 bug：init 的重绘代码在有 rootfs 时永不执行
+
+`ir-root/init` 的结构：
+
+```sh
+if [ -n "$ROOT" ]; then
+    ...
+    exec chroot /mnt/root /lib/systemd/systemd   # 进程被替换
+fi
+# ↓ 以下只有「没找到 rootfs」才会执行
+... 彩条重绘 / 拉满背光 ...
+```
+
+`exec` 是替换进程，第 132 行之后的代码在正常启动（有 rootfs）时**根本不存在**。
+所以彩条和背光拉满从来没跑过 —— 这也解释了为什么屏幕一直黑。
+
+修复：把重绘挪到 `chroot` 之前，并把结果写进持久日志：
+
+```sh
+  # repaint-before-chroot: chroot 之后 init 会被 systemd 替换，必须在这里画
+  if [ -x /bin/repaint ]; then
+    RP=$(/bin/repaint 2>&1)
+    echo "REPAINT: $RP"
+    [ -w /mnt/root/var/log/nuwa-stage.log ] && echo "repaint: $RP" >> /mnt/root/var/log/nuwa-stage.log
+  fi
+  stage chroot_begin
+```
+
+产物：`other/abl-nuwa-v95-pattern2.img` 35,950,592 B `b3dc63b5…`
+
+判读表（日志 × 屏幕）：
+
+| `nuwa-stage.log` | 屏幕 | 结论 |
+|---|---|---|
+| `repaint: repaint(pattern) done` | 彩条 | 全链路正常 |
+| `repaint: repaint(pattern) done` | 全黑 | 写入成功但没显示 ⇒ DSI/DSC |
+| `repaint: no /dev/fb0` | 全黑 | fbdev 未就绪 ⇒ DRM 没初始化 |
+| 无 `repaint:` 行 | 全黑 | init 更早处卡住 |
+
+同时把 `nuwa-report` 扩展到：stage log、fb 参数（virtual_size/bpp/stride）、背光节点、lsmod、ip link。
+
 ## 2026-10-31 17:20 内核启用模块支持，ath11k 改为手动加载（v94）
 
 #### 发现：内核根本没开 `CONFIG_MODULES`
