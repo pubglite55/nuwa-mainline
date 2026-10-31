@@ -102,6 +102,41 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 02:50 无人值守闭环：panic 自动重启 + 自恢复二分脚本
+
+#### 关键改进：cmdline 加 `panic=10`
+
+之前 panic 后设备停在原地，必须人工长按电源键；现在 **panic 10 秒后自动重启**：
+
+```
+panic -> 10s -> 重启 -> ABL 回 Android -> adb reboot bootloader -> 下一轮 fastboot boot
+```
+
+整条链路由 `private/oneshot2.ps1` 自动驱动，形成无人值守迭代闭环。
+
+（未采用硬件看门狗：sm8550 的 APSS WDT 节点在本机未经验证，
+ `qcom-wdt` 驱动的 kpss 布局与 sm8550 是否一致无法离线确认，
+ 误写寄存器有死机风险，故选标准 `panic=` 机制。）
+
+#### 产物
+
+| 文件 | 说明 |
+|---|---|
+| `other/abl-nuwa-v128-s0..s4.img` | 5 阶段触控镜像，均带 `panic=10` |
+| `private/oneshot2.ps1` | 全自动二分（含 panic 自恢复、adb 回 fastboot）|
+| `private/nuwa-net.ps1` | telnet RPC（裸 TCP，剥 IAC）|
+
+#### 阻塞（第 5 轮，同一条件）
+
+设备停在 v124 系统内。三条通道全断：
+
+1. 串口 ACM 停在 stall（`Open()` → ERROR_GEN_FAILURE），停用/启用、重枚举父设备均无效
+2. USB 网络：设备侧 usb0 无地址（NM 曾冲掉），链路本地与 IPv6 邻居均不可见
+3. 主机非管理员：加 IP、加路由、开 DHCP 全部被拒
+
+⇒ **必须人工长按电源键 + 音量下进入 fastboot**。
+进入后 `oneshot2.ps1` 可全程自动完成剩余验证。
+
 ## 2026-11-01 02:45 离线加固：日志落盘 + 常驻按键记录 + 按键参数对齐
 
 设备无可用通道期间，把“下次上机能否取证”这件事彻底解决。
