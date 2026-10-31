@@ -3,6 +3,52 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 13:45 Wi-Fi（WCN6856 / ath11k）：驱动已能绑定，卡在固件初始化
+
+#### 已查清的事实
+
+| 项 | 结论 |
+|---|---|
+| 芯片 | PCIe `17cb:1107` = **WCN6856**（不是 WCN6855 的 1103） |
+| 内核缺陷 | 本树 ath11k 的 ID 表只有 1101/1103/1104，**没有 1107** |
+| 补丁 | `pci.c` 加 `WCN6856_DEVICE_ID 0x1107`、ID 表、`case` 与 WCN6855 并列 |
+| 绑定结果 | ✅ `ath11k_pci 0000:01:00.0: wcn6855 hw2.0` |
+
+#### 固件来源（Android）
+
+`/vendor/firmware_mnt/image/kiwi/` 里齐了：
+
+- `amss.bin` 7.4 MB（WLAN 固件）
+- `bdwlan.e01…e58`、`bd_m*.elf`（各硬件变体的板级标定，每个都是**独立完整 ELF**）
+- `regdb.bin` / `regdb_xiaomi.bin`（管制域数据库）
+- `phy_ucode.elf`、`Data.msc`
+
+板数据打包：按 fuxi 的做法生成 `board-2.bin`（magic `QCA-ATH11K-BOARD`，
+单个 `board-id=255` 条目，板名 `bus=pci,vendor=17cb,device=1107,…qmi-chip-id=2,qmi-board-id=255`，
+数据 = 厂商 ELF 原样）。生成器 `private/mkbdf.py`。
+
+#### 卡住的地方
+
+```
+ath11k_pci 0000:01:00.0: wcn6855 hw2.0
+mhi mhi0: Direct firmware load for ath11k/WCN6855/hw2.0/amss.bin failed with error -2   <- 时序
+ath11k_pci 0000:01:00.0: failed to power up mhi: -110
+```
+
+ath11k 在 **1.5 秒**探测，那时 rootfs 未挂载 ⇒ 同 ADSP 的时序问题。
+已把固件放进 **initramfs**（`ir-root/lib/firmware`，46 MB；boot.img 35.8 MB）。
+之后固件能找到了，但整机在 MHI power-up 阶段**卡死**（ACM 与网络全无响应），
+判断是 amss/board 与这块 WCN6856 不匹配导致固件崩溃/RDDM 循环。
+
+#### 当前取舍
+
+`other/abl-nuwa-v82-stable.img`（`8d7f3c3a…`）= **关闭 ATH11K** 的稳定版，
+保留显示/触控/ADSP/电量。Wi-Fi 驱动补丁留在树里，下次单独迭代。
+
+下一步需要：逐个换 board 数据候选（`bd_m3.elf` / `bdwlan.e01` / 其它变体），
+每次重启观察 RDDM 次数与 `wlan0` 是否出现 —— 这个流程需要能自动恢复，
+因为挂死时串口和网络都会失联（见 tech-debt TD-14）。
+
 ## 2026-10-31 13:05 ADSP 远程处理器 + 电量/充电打通
 
 ```
