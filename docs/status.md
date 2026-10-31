@@ -3,6 +3,44 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 16:20 桌面为什么看不见：wlroots 拿不到 allocator
+
+逐步排查得到的链条：
+
+| 环节 | 结果 |
+|---|---|
+| DRM 输出 | ✅ `connector DSI-1: Modesetting with 1440x3200 @ 60.000 Hz` |
+| phoc 初始化 | ✅ 找到 1 GPU、2 CRTC、10 plane，`Running compositor on wayland display 'wayland-0'` |
+| gl/renderer | ❌ `eglInitialize: EGL_NOT_INITIALIZED`（GPU 没起来）|
+| pixman 软件渲染 | ❌ `Failed to create allocator` |
+| 结论 | **wlroots 必须有可用的 DRM 渲染节点才能建 allocator ⇒ GPU 不修好，Phosh 起不来** |
+
+顺手修掉的三个坑（都是服务化启动的必需品）：
+
+1. `XDG_RUNTIME_DIR` 未设置 → `Unable to open wayland socket`；加 `Environment=XDG_RUNTIME_DIR=/run/user/0` + `RuntimeDirectory=user/0`
+2. `WLR_RENDERER=pixman` 才能在没有 EGL 时继续（虽然仍卡 allocator）
+3. `--no-install-recommends` 装 phosh 会缺 `gnome-session` 和 `gnome-settings-daemon` 的 GSettings schema，
+   phosh 会 `SIGSEGV`；补装 `phosh gnome-session gnome-settings-daemon`（共 1028 包）
+
+#### 备选路线：Xorg + fbdev（不依赖 GPU）
+
+已装 `xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-libinput xinit matchbox-window-manager xterm`，
+`/etc/X11/xorg.conf.d/20-fbdev.conf` 强制 `Driver "fbdev" Option "fbdev" "/dev/fb0"`，
+服务 `nuwa-x.service`：
+
+```ini
+ExecStart=/usr/bin/xinit /usr/local/bin/nuwa-xsession -- /usr/bin/X :0 vt1 -nolisten tcp -novtswitch
+```
+
+同时停用 `phosh.service`（它会无限重启）。
+
+#### GPU 待办（下一步重点）
+
+ZAP 已用 `/odm` 的小米签名版（`-22` 已消失），`gmu_gen70200.bin` 命名已修正，
+但 GMU 仍 `GPU_SET` OOB 超时、`gpu_cc_gx_gdsc status stuck at 'on'`。
+fuxi 同 SoC 只需要 `&gpu { status = "okay" }` + `zap-shader { firmware-name = ... }`，
+我们两者都有 ⇒ 差异可能在 GPUCC/GDSC 或 OPP 表（主线注释写 “Speedbin needs more work on A740+”）。
+
 ## 2026-10-31 15:25 GPU：ZAP 签名问题解决，GMU 仍超时（当前软件渲染）
 
 #### 关键发现（来自 fuxi 的 GPU 定位文档）
