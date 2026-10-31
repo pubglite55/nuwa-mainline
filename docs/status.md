@@ -3,6 +3,35 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 14:15 ath11k 挂死已确认是内核层；新增诊断开关与阶段日志
+
+#### 结论：不是 systemd，是内核真挂死
+
+新增 cmdline 开关 `nuwa_noswitch=1`：带它启动时 init **停在 initramfs**、不进 systemd。
+用它跑 ath11k 版本（v84）：**ACM 串口依然是死的** ⇒ 挂死发生在内核里（ath11k/MHI 初始化），
+不是 systemd 卡住导致没人应答。
+
+#### 新增的调试设施（保留）
+
+| 设施 | 位置 | 用途 |
+|---|---|---|
+| 阶段日志 | rootfs `/var/log/nuwa-stage.log` | init 把 `rootfs_mounted` / `fw_bound` / `pas_rebind_done` / `chroot_begin` 写进持久文件，断电重启后仍可查 |
+| 诊断开关 | cmdline `nuwa_noswitch=1` | 停在 initramfs，排除 systemd 因素 |
+
+#### 音频：驱动补齐（待测）
+
+查配置发现缺 **WCD938x 编解码器**与 **CS35L41 I2C**（Q6APM/Q6PRM/CS35L41 核心本来就有）：
+
+```
+CONFIG_SND_SOC_WCD938X=y
+CONFIG_SND_SOC_WCD938X_SDW=y
+CONFIG_SND_SOC_CS35L41_I2C=y
+```
+
+DTS 里 `wcd938x`、`cs35l41@40/@42`、`sound` 节点本来就在。
+ADSP 已起来（`remote processor adsp is now up`、`audio_pd` 就绪），具备出声前提。
+产物：`other/abl-nuwa-v85-audio.img` 35,868,672 B `e946e8f4…`
+
 ## 2026-10-31 13:45 Wi-Fi（WCN6856 / ath11k）：驱动已能绑定，卡在固件初始化
 
 #### 已查清的事实
