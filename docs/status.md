@@ -3,6 +3,44 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 11:15 触控：找到三层问题，第 3 层仍未解决
+
+#### 已修
+
+| 层 | 问题 | 修法 |
+|---|---|---|
+| 1 | `CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI` 未启用 | `scripts/config -e` |
+| 2 | DTS compatible 写成 `st,fts`，驱动要 `st,spi` | 改 DTS |
+| 3 | fts 节点原本挂在 `spi4-gpio`（**GPIO 位bang 模拟 SPI**） | 迁到硬件 `&spi4` |
+
+第 3 层的依据：厂商 DT 里触控在 `spi@a90000`；对照主线 `sm8550.dtsi`，
+`0xa90000` 正是 `spi4`（`qcom,geni-spi`，label `spi4`）。
+迁移后必须同时把 `spi4-gpio` 关掉，否则它会用 pinctrl 抢走 44~47 号引脚。
+
+#### 实测结果
+
+| 版本 | 配置 | 结果 |
+|---|---|---|
+| v65 | 只开驱动 | SPI 有设备但驱动未绑定（`spi:ir-spi`，是红外） |
+| v66 | 开 `SPI_GPIO` + fts 在 spi4-gpio | **内核卡死**（gadget 起、控制台死） |
+| v67 | 只开 `SPI_GPIO`、关 fts 节点 | **正常启动** ⇒ 卡死来自 fts 驱动 |
+| v68b | fts 迁到硬件 `spi4` | 能启动、控制台短暂可用，随后 **USB-ACM 卡死** |
+| v69 | 同上 + init 里 `dmesg -n 2` | 仍然 ACM 卡死 |
+
+#### 判断
+
+用 GPIO 位bang 时芯片不响应，驱动在 probe 里死等 ⇒ 整机卡死；
+换到硬件 `spi4` 后不再卡死内核，但驱动仍会让 **USB-ACM 控制台失联**
+（gadget 枚举成功、COM 口打不开）。
+
+结论：**触控驱动需要单独深入调试**（vendor blob，日志量大、失败模式是失联），
+在没有可用 rootfs / journal 的情况下代价太高。**先暂停触控，推进 rootfs 部署**，
+有了 systemd 之后可用 journal、可动态 bind/unbind 再回来做。
+
+#### 当前稳定可用版本
+
+`other/abl-nuwa-disp-v64-black.img`（`f18ec6fc…`，显示 + 干净终端，无触控）。
+
 ## 2026-10-31 10:10 **显示通了**：不是解码问题，是首帧 + 更新范围问题
 
 #### 决定性观察（用户）
