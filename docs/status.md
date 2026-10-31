@@ -71,6 +71,63 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 20:45 **里程碑：Phosh 锁屏界面点亮**
+
+用户确认：屏幕上出现了 **Phosh 锁屏界面**。桌面栈打通。
+
+#### 达成条件（三者缺一不可）
+
+1. **软件 vblank**：主线 msm 没有命令模式 TE 支持，`dpu_crtc` 增加 hrtimer，每 16.6ms 调 `drm_crtc_handle_vblank()`
+   - `dpu_crtc.h`：`struct hrtimer vblank_timer;`
+   - `dpu_crtc.c`：`dpu_crtc_sw_vblank()` 回调 + enable 时启动 / disable 时取消 + `hrtimer_setup()`
+2. **解绑 fbcon**：`echo 0 > /sys/class/vtconsole/vtcon1/bind`，释放 CRTC 给 phoc
+3. **pixman 渲染**：`WLR_RENDERER=pixman`（Mesa freedreno 仍不可用，EGL 建不起 pipe）
+
+结果：`vblank fps: 31`、`Atomic commit failed: 0`、`Output 'DSI-1' added`、`Enabling shell mode`。
+
+#### 已修：电源键黑屏
+
+按电源键会触发 logind 的 suspend/blank，而 suspend 未实现 ⇒ 一按就黑。
+已写 `/etc/systemd/logind.conf.d/10-nuwa.conf`：
+
+```ini
+[Login]
+HandlePowerKey=ignore
+HandleSuspendKey=ignore
+HandleHibernateKey=ignore
+IdleAction=ignore
+```
+
+#### 已装：Phosh 开机自启
+
+`/etc/systemd/system/nuwa-phoc.service`（WantedBy=multi-user.target，已 enable）：
+`ExecStartPre` 解绑 vtcon1，`ExecStart` 跑 `phoc -S -C /usr/share/phosh/phoc.ini -E /usr/libexec/phosh`，
+`Restart=always`。写在 rootfs 里，重启后仍然有效。
+
+#### 显示保真度诊断（重要结论）
+
+用测试图逐项排除：
+
+| 测试图 | 结果 | 结论 |
+|---|---|---|
+| 8 色竖条 + 灰阶 | 正常 | 色彩/几何正确 |
+| 整屏 1px 黑白竖条 | 有纹理 | 未发生缩放 |
+| **左半红 / 右半蓝** | **分界正好在中间** | **两个 mixer / 两个 DSC slice / lane 映射全部正确** |
+
+⇒ 几何是 1:1 的。“文字有重影、像素像关了一半”不是 slice 或 lane 错位，
+而是**命令模式无 TE 同步下的帧更新残影**；phoc 用页翻转后应消失（待确认）。
+
+#### 待办：触控不工作
+
+```
+st-ftm5 spi2.0: chip 3640 fw 0018 cfg 0022 panel 3199x1439   ← 芯片通信正常
+st-ftm5 spi2.0: error event f3 12 00 00 00 00 00 00          ← 每秒约 18 次
+```
+
+芯片/固件/分辨率都读到了，但**事件报文类型 0xf3 不被驱动识别**。
+方向：SPI 报文长度/对齐、`stmfts` 与实际 FTS 固件协议的差异、`spi-max-frequency`。
+设备节点：`/dev/input/event2`（Name="ST FTM5 Touchscreen"）。
+
 ## 2026-10-31 20:10 video mode 尝试结果 + 厂商 TE/时序取证
 
 #### v101 改成 video mode（`MIPI_DSI_MODE_VIDEO`）
