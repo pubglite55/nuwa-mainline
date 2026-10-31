@@ -71,6 +71,59 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 20:10 video mode 尝试结果 + 厂商 TE/时序取证
+
+#### v101 改成 video mode（`MIPI_DSI_MODE_VIDEO`）
+
+| 指标 | 命令模式 (v100) | video mode (v101) |
+|---|---|---|
+| CRTC | 1440×3200 | 1440×3200 |
+| Atomic commit 失败 | 2 | **0** |
+| phoc CPU | 76% | **28%** |
+| vblank | fps 0 | 仍黑屏 |
+| DSI 错误 | - | `dsi_err_worker: status=4` |
+
+`status=4` 解析为 **`DSI_ERR_STATE_FIFO`（0x0004）= DSI FIFO 错误**（见 dsi_host.c:91），
+是真实的链路层错误，video 模式下时序不匹配就会出这个。
+
+#### 主线 msm 没有 TE 使能实现
+
+```
+grep 'enable_te' drivers/gpu/drm/msm/dsi/*.c  →  无任何结果
+```
+
+所以**命令模式在 phoc 下拿不到 vblank**：fbdev 路径下 msm 每次 fb 写入立即 kickoff 一帧（所以彩条能看到），
+而 DRM 客户端的异步 flip 依赖 vblank，没有 TE 就永远不完成 ⇒ fps 0 ⇒ 黑屏。
+
+#### 厂商 DTB 取证（`fdt-live.dts`）
+
+TE 配置（line 29912）：
+
+```
+qcom,mdss-dsi-te-using-te-pin;
+qcom,mdss-dsi-te-check-enable;
+qcom,mdss-dsi-te-dcs-command = <0x01>;
+qcom,mdss-dsi-te-pin-select = <0x01>;
+```
+
+1440 宽面板存在多组时序，其中一组（line 32356）：
+
+```
+h-pulse=0x10(16) h-back=0x20(32) h-front=0x64(100)
+v-pulse=0x02(2)  v-back=0x08(8)  v-front=0x0a(10)
+```
+
+另两组（line 31800 / 31834）h/v porch 在 90–120 量级，说明**不同刷新率有不同时序**。
+我们 DTS 现在用的 32/32/16 + 24/24/8 **与厂商任何一组都不匹配**，video 模式下必然出错。
+
+#### 下一步（按顺序）
+
+1. 把 DTS 时序换成厂商对应刷新率的那一组（先用 line 32356 的 16/32/100 + 2/8/10 试 video mode）
+2. video mode 通了再看是否需要 DSC 参数微调
+3. 若要回到命令模式，需要自己给 msm 实现 `msm_dsi_host_enable_te()`（上游缺失）
+
+产物：`other/abl-nuwa-v101-video.img` `49f045da…`
+
 ## 2026-10-31 19:50 Phosh 接管显示：CRTC 已设但 vblank fps = 0（TE 未驱动）
 
 #### 进展：phoc/phosh 真正拿到了 DRM 主设备
