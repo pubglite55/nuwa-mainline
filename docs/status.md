@@ -71,6 +71,50 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 21:20 电源键、触控排查
+
+#### 电源键：已彻底屏蔽（绕过，不是修好）
+
+现象链：按电源键 → phoc 关闭输出 → 面板 unprepare 断电 → 再也无法重新初始化 → 永久黑屏。
+
+处理：在 udev hwdb 层把 KEY_POWER 抹掉。
+
+```
+# /etc/udev/hwdb.d/90-nuwa-power.hwdb
+evdev:name:pmic_pwrkey:*
+ KEYBOARD_KEY_74=reserved
+```
+
+注意：**必须是 `pmic_pwrkey`**，不是 `pmic_resin`（我一开始写错了，白试一轮）。
+
+另外 `unprepare` 加了拒绝断电保护（`NUWA_KEEP_ON`），所以即使触发也不会立刻黑，
+但代价是画面冻结、再按无响应 —— 只是临时缓解。
+
+#### 触控：控制器没有在扫描
+
+硬数据：
+
+- `st-ftm5 spi2.0: chip 3640 fw 0018 cfg 0022 panel 3199x1439`（芯片通信正常，分辨率正确）
+- dmesg 每 ~56ms 一条 `error event f3 12 00 00 00 00 00 00`
+- **`timeout 10 dd if=/dev/input/event2` 在用户滑动屏幕时返回 0 字节** ⇒ 没有任何输入事件
+
+结论：控制器处于“只上报错误、不扫描”的状态，不是坐标解析问题。
+
+已排除：
+
+| 假设 | 排除依据 |
+|---|---|
+| 驱动版本不对 | 与 fuxi 的 `st-ftm5.c` **逐字节相同**（9568 B）|
+| 引脚配置不对 | `mi_ts_active` 与 fuxi `ts_default` 完全一致（gpio24/25、pull-up、8mA）|
+| avdd 电压不足 | 名字虽叫 `vreg_l6m_1p8`，实际 min/max = 3.0/3.2V，与厂商 `pm8010m_l6` 相符 |
+| 面板型号不同导致 | 芯片自报 `panel 3199x1439`，与 1440×3200 一致 |
+
+下一个方向：`ftm5_sense_on()` 只写了 3 个字节
+（`FTM5_CMD_SCAN_MODE, FTM5_SCAN_ACTIVE, FTM5_SCAN_MULTI_TOUCH`），
+而厂商节点有 `fts,config-array-size` 与一整套面板参数（touch-follow-performance、
+tap-sensitivity、cornerfilter-area…）。**控制器缺少面板配置，可能因此拒绝进入扫描。**
+需要：从 `fdt-live.dts` 提取这些参数 → 实现配置下发 → 再 `sense_on`。
+
 ## 2026-10-31 20:45 **里程碑：Phosh 锁屏界面点亮**
 
 用户确认：屏幕上出现了 **Phosh 锁屏界面**。桌面栈打通。
