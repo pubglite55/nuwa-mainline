@@ -178,6 +178,76 @@
 
 ---
 
+## 未还（2026-10-31 新增）
+
+### TD-20 init 直接往 fb0 画固定图案（repaint）
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | initramfs 的 `/bin/repaint` 在启动末尾把一张 1440×3200 彩条图案（gzip 后 21.7 KB）写进 `/dev/fb0`；无图案文件时退回铺黑 |
+| 位置 | `ir-root/bin/repaint` + `ir-root/lib/nuwa-pattern.raw.gz`（编进内核 initramfs）|
+| 为什么暂时需要 | 面板是命令模式不自刷新，首帧坏内容需要一次全帧覆盖；同时可在没有 compositor 时判定显示链路是否通 |
+| 正确做法 | 由合成器/DRM 正常呈现内容，init 不再直接操作 framebuffer |
+| 影响与风险 | 每次启动屏幕留彩条直到有程序接管；initramfs 增加 21.7 KB |
+| 去掉条件 | Xorg 或 GNOME 能稳定画出桌面后改回铺黑或删除 |
+
+### TD-21 用 Xorg + fbdev 代替 GNOME/Phosh
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | 装 `xserver-xorg-video-fbdev` + `matchbox-window-manager` + `xterm`，`nuwa-x.service` 开机在 tty1 启 X，同时停用 `phosh.service` |
+| 位置 | rootfs `/etc/systemd/system/nuwa-x.service`、`/etc/X11/xorg.conf.d/20-fbdev.conf`、`/usr/local/bin/nuwa-xsession` |
+| 为什么暂时需要 | wlroots 系（phoc/sway/weston）必须有可用 DRM 渲染节点才能建 allocator；Adreno 740 的 GMU 尚未握手成功 ⇒ Phosh 无限崩溃重启 |
+| 正确做法 | GPU 正常后回到 Phosh/GNOME（Phosh 已装好，启用即用）|
+| 影响与风险 | CPU 软件渲染掉帧；X 与 Wayland 生态不同，后续需重测 |
+| 去掉条件 | `dmesg` 无 GMU 超时、`/dev/dri/renderD128` 能建 EGL |
+
+### TD-22 ath11k 模块化 + blacklist 自动加载
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | `CONFIG_ATH11K=m`，模块装进 rootfs，`/etc/modprobe.d/nuwa-wifi.conf` blacklist 阻止 udev 自动加载，改为手动 `modprobe ath11k_pci` |
+| 位置 | 内核 `.config`、rootfs `/lib/modules/7.3.0/`、`/etc/modprobe.d/nuwa-wifi.conf` |
+| 为什么暂时需要 | 固件阶段会让整机硬挂死，开机自动加载等于一启动就失联；手动加载可把触发点隔离到一次明确操作 |
+| 正确做法 | 固件与板数据匹配稳定后去掉 blacklist，恢复自动加载 |
+| 影响与风险 | 忘记手动加载就没 Wi-Fi；模块版本须与 `uname -r` 一致（已加 `7.3.0+ -> 7.3.0` 链接）|
+| 去掉条件 | 冷启动后 `wlan0` 稳定出现且不挂死 |
+
+### TD-23 放宽 battmgr 回包长度校验
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | `qcom_battmgr.c` 里 4 处 `payload_len != sizeof(...)` 改成 `<`，接受比主线预期更大的回包 |
+| 位置 | `drivers/power/supply/qcom_battmgr.c` |
+| 为什么暂时需要 | 厂商 ADSP 返回 132 B（strval 尺寸）而驱动按 8 B（intval）校验，属性永远 `-ENODATA` 并被每秒重试，日志刷屏 |
+| 正确做法 | 查明厂商固件的属性 ABI 版本按实际结构体解析，或换用匹配的 ADSP 固件 |
+| 影响与风险 | ABI 相近但字段不同时可能读到错误值（当前 `capacity`/`status` 正常）|
+| 去掉条件 | 使用与主线 ABI 一致的 ADSP 固件 |
+
+### TD-24 全量固件塞进 initramfs
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | ADSP/Wi-Fi/GPU 固件约 54 MB 直接编进内核 initramfs（`ir-root/lib/firmware`），boot.img 因此 35.8 MB |
+| 位置 | `ir-root/lib/firmware/`、`CONFIG_INITRAMFS_SOURCE` |
+| 为什么暂时需要 | remoteproc / ath11k / msm 都在 1.5–2 秒探测，那时 rootfs 未挂载，`/lib/firmware` 为空 |
+| 正确做法 | 用独立 initramfs 配合 `firmware_class` 延迟探测，或让驱动 `EPROBE_DEFER` 到 rootfs 就绪 |
+| 影响与风险 | 改固件要重编内核；boot.img 体积大；内存占用增加 |
+| 去掉条件 | 驱动能在 rootfs 挂载后加载（模块化后部分已满足）|
+
+### TD-25 init 里强制 unbind/bind ADSP 重试一次
+
+| 项 | 内容 |
+|---|---|
+| 临时做法 | init 在固件 bind 后把 `6800000.remoteproc` 解绑再绑定一次，绕过首次 PAS 因 `-ENOENT` 失败后不重试的问题 |
+| 位置 | `ir-root/init` |
+| 为什么暂时需要 | 首次探测时固件不可见，remoteproc 失败后不自动重试，ADSP 永远起不来 |
+| 正确做法 | 固件在探测前可见（见 TD-24），或用模块 + 手动加载 |
+| 影响与风险 | init 多 3 秒延时；解绑重绑期间 ADSP 短暂异常 |
+| 去掉条件 | 冷启动一次 `remote processor adsp is now up` 无需重试 |
+
+---
+
 ## 按影响排序的还款优先级
 
 | 优先级 | 技术债 | 理由 |
