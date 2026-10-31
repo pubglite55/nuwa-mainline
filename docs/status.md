@@ -102,6 +102,52 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 02:45 离线加固：日志落盘 + 常驻按键记录 + 按键参数对齐
+
+设备无可用通道期间，把“下次上机能否取证”这件事彻底解决。
+
+#### 1. rootfs 新增两个常驻服务
+
+| 服务 | 作用 | 产物 |
+|---|---|---|
+| `nuwa-bootlog.service` | 开机把 `dmesg` 与 `/sys/fs/pstore` 写盘 | `/var/log/nuwa/boot-*.log`、`pstore-*` |
+| `nuwa-keylog.service` | 常驻读所有 `/dev/input/event*` | `/var/log/nuwa/keys-event*.log` |
+
+⇒ **即使串口和 USB 网络全断**，也能事后从 rootfs 镜像里读到本次启动日志与按键事件，
+按键测试也不再受“几十秒采集窗口”限制（skill 推荐长跑记录器）。
+
+#### 2. usb0 不再被 NetworkManager 接管
+
+这是 169.254.10.2 ping 不通的直接原因：initramfs 设了地址，NM 接管后冲掉。
+
+```
+/etc/NetworkManager/conf.d/99-usb0-unmanaged.conf  -> unmanaged-devices=interface-name:usb0
+/etc/systemd/network/10-usb0.network               -> Address=169.254.10.2/16 + ConfigureWithoutCarrier
+```
+
+#### 3. 按键参数对齐厂商
+
+| 项 | 我们 | 厂商 | 处理 |
+|---|---|---|---|
+| 音量上去抖 | 15 ms | 32 ms | 改为 32 |
+| 音量上引脚 | `pm8550_gpios 6 ACTIVE_LOW` | 同（`0x5b9 0x06 0x01`）| 一致 |
+| 电源键 | `pmk8350-pwrkey` IRQ `0 0x13 7 EDGE_BOTH` | 同 | 一致 |
+| 音量下 | `pon_resin` → `KEY_VOLUMEDOWN` | 同（code 0x72）| 一致 |
+| PON 父节点 | `qcom,pmk8350-pon`, reg 0x1300/0x800, names hlos/pbs | `qcom,pm8998-pon`, 同址 | 等价（驱动不依赖名字）|
+
+⇒ 按键 DTS 与厂商一致，**问题不在设备树**；需要上机用常驻记录器复测。
+
+#### 4. 产物（5 个阶段镜像，cmdline 已内置各 stage）
+
+`other/abl-nuwa-v127-s0.img` … `s4.img`（36,261,888 B 各）
+
+配套脚本：`private/oneshot.ps1`（刷 rootfs → 依次跑 s0..s4 → 拉日志 → 自动 `reboot bootloader`）。
+
+#### 阻塞（连续第 4 轮）
+
+设备停在 v124 系统内，串口与网络均不可达，主机非管理员。
+**需要物理进入 fastboot** 才能继续验证。
+
 ## 2026-11-01 02:30 触控调试改为「分阶段 + 网络通道」，摆脱串口依赖
 
 #### 问题：串口彻底不可用
