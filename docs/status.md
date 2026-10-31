@@ -3,6 +3,44 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 13:05 ADSP 远程处理器 + 电量/充电打通
+
+```
+remoteproc remoteproc1: Booting fw image qcom/sm8550/nuwa/adsp.mdt, size 8524
+remoteproc remoteproc1: remote processor adsp is now up
+PDR: Indication received from msm/adsp/audio_pd, state: 0x1fffffff
+PDR: Indication received from msm/adsp/charger_pd, state: 0x1fffffff
+capacity = 100   status = Charging
+```
+
+#### 做法
+
+1. 内核开 `CONFIG_BATTERY_QCOM_BATTMGR=y`（`QCOM_PMIC_GLINK`、`QCOM_Q6V5_PAS` 原本已是 y）
+2. 从 Android 的 `/vendor/firmware_mnt/image` 取 ADSP **PIL 分段固件**：
+   `adsp.mdt` + `adsp.b00…b58`（缺号的是 hash 段，在 mdt 里）+ `adsp_dtb.mdt/b00..b02`，共 61 个文件
+3. DTS 的 `firmware-name` 从 `adsp.mbn` 改为 **`adsp.mdt`**（主线 `mdt_loader` 原生支持分段格式）
+4. 固件放进 rootfs 的 `/usr/lib/firmware/qcom/sm8550/nuwa/`
+
+#### 踩到的坑（重要）
+
+ADSP 在 **0.42 秒**就被 PAS 驱动探测，那时 rootfs 还没挂载 ⇒
+`Direct firmware load ... failed with error -2`。
+修法：init 在挂载 rootfs 之后，把 rootfs 的固件目录 **bind 到 initramfs 的 `/lib/firmware`**，
+再对 `6800000.remoteproc` / `4080000.remoteproc` 做 unbind+bind 重新探测：
+
+```sh
+mount --bind /mnt/root/usr/lib/firmware /lib/firmware
+echo 6800000.remoteproc > /sys/bus/platform/drivers/qcom_q6v5_pas/unbind
+echo 6800000.remoteproc > /sys/bus/platform/drivers/qcom_q6v5_pas/bind
+```
+
+`debugfs` 写文件的两个坑：
+
+- `/lib/firmware` 是符号链接（merged usr）⇒ 必须写 **`/usr/lib/firmware`**
+- `debugfs -R "cd X" -R "write A B"` 的 `cd` **不会**带到下一条 `-R` ⇒ 必须写完整路径
+
+产物：`other/abl-nuwa-v77-adspfw.img` 12,861,440 B `edce6242…`；rootfs `nuwa-rootfs-adsp.simg` 485 MiB
+
 ## 2026-10-31 12:35 触控打通：移植 fuxi 的主线 `st-ftm5` 驱动
 
 厂商 blob（`fts_spi`）在 nuwa 上必然挂死/失联，改为移植 fuxi 自己写的主线驱动：
