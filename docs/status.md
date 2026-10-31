@@ -102,6 +102,58 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 02:00 厂商驱动崩溃排查：中断上下文空指针 + gadget 损坏
+
+#### 决定性证据（用户从屏幕抄下的 panic）
+
+```
+Unable to handle kernel paging request at virtual address 0000ffff405b0000
+ESR = 0x96000044  FSC = 0x04: level 0 translation fault  WnR = 0 (读)
+Comm: swapper/0            ← 中断上下文
+Kernel panic - not syncing: Fatal exception in interrupt
+```
+
+⇒ 之前判断的“内核挂死”是错的：实际是 **panic**。也解释了串口立刻失效，
+而 USB 仍在硬件层枚举（panic 停了 CPU，PHY 还在）。
+
+#### 已尝试的修复与结果
+
+| 版本 | 改动 | 结果 |
+|---|---|---|
+| v123 | `fts_enable_reg()` 空实现（排查是否动到 USB 共用电源轨）| ❌ 仍 panic ⇒ 与 regulator 无关 |
+| v124 | 中断入口加 `if (!info || !nuwa_fts_ready) return IRQ_HANDLED;` | ⚠️ 该 panic 路径未再复现，但 gadget 仍损坏 |
+
+注：v124 里 `nuwa_fts_ready` 从未置 true（probe 末尾没有 `return 0`，走的是别的返回路径），
+所以虽然不再 panic，**触控也不会工作** —— 下一步必须补上置位。
+
+#### 新问题：宿主侧串口彻底打不开
+
+`COM5` 枚举正常，但 `SerialPort.Open()` 报 `连到系统上的设备没有发挥作用`（ERROR_GEN_FAILURE）。已尝试：
+
+1. `Disable/Enable-PnpDevice` 子设备（COM5）→ 无效
+2. 重枚举父复合设备 `USB\VID_1D6B&PID_0104` → 无效
+3. NCM 网络通道：主机 `以太网 5` = 169.254.5.86，设备侧未配 IP，6 个候选地址全超时
+
+⇒ 设备端 ACM 接口停在 stall 状态。最可靠办法是**拔插 USB 线**物理重枚举，
+或下次启动新内核自然重建 gadget。
+
+#### 已就绪但未使用的工具
+
+- **ramoops 已配置**：DTS 有 `ramoops@a7000000`，`CONFIG_PSTORE_RAM=y`；
+  下次 panic 后可从 `/sys/fs/pstore/console-ramoops*` 取崩溃现场（需先有可用日志通道）
+- `android-mainline-port` skill 已装到 `~/.agents/skills/`，其 `experience/touch-and-input.md`
+  收录了「触控在面板上电前 probe，读到全零后连锁空指针」等对症条目
+
+#### 下一步（不依赖串口的二分法）
+
+用**屏幕**作为通过/失败信号，逐段放开厂商驱动：
+
+1. v125：probe 入口打印后直接 `return -ENODEV` ⇒ 期望系统完全正常
+2. v126：只做 DT 解析 + 分配，不碰硬件 ⇒ 期望正常
+3. v127：加电源/复位 ⇒ 观察是否 panic
+4. v128：加 SPI 读 ID ⇒ 观察
+5. 每步靠“是否 panic / 能否回到 fastboot”判定，同时补上 `nuwa_fts_ready` 置位
+
 ## 2026-11-01 00:20 **厂商触控驱动移植成功（编译层面）**
 
 #### 成果
