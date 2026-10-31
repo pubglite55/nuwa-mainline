@@ -71,6 +71,59 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 18:30 真机里程碑：显示点亮 + GPU 初始化成功
+
+#### 1. 显示通了（人眼确认）
+
+用户反馈：屏幕上出现 **8 条彩色竖条 + 下半部灰阶渐变**（init 画的测试图案）。
+说明 DSI / DPU / 面板 / DSC 整条链路是通的。
+
+两个致命修复：
+
+- init 的重绘原来写在 `exec chroot` 之后，永远不执行 → 移到 chroot 之前
+- 面板被 fbdev 熄屏：`/sys/class/graphics/fb0/blank = 4`（POWERDOWN）→ `echo 0` 解除
+- `dd` 的 count 从 4608 改成 **4500**（fb = 1440×3200×4 = 18,432,000 B = 4500×4096）
+
+#### 2. GPU 修好了
+
+```
+[drm] Loaded GMU firmware v4.1.9
+/sys/kernel/debug/dri/1/gpu:
+  gpu-initialized: 1
+  revision: 0 (43050a01)
+  ringbuffer: last-fence == retired-fence
+```
+
+`gpu hw init failed` 与 GMU OOB 超时全部消失。根因是 zap 固件的**设备树路径**
+（`qcom/sm8550/nuwa/a740_zap.mbn`，放在 `qcom/` 下等于没加载）。
+
+#### 3. 面板二次初始化自毁（已修）
+
+X/phosh 接管显示时会重新初始化面板，第二次 init 序列 DSI 命令 DMA 超时（-110）。
+修法：`panel-nuwa-m2.c` 加 `nuwa_on` 状态 ——
+`prepare` → `NUWA_SKIP_REINIT`；`unprepare` → `NUWA_KEEP_ON`；`enable` → `NUWA_ALREADY_ON`。
+
+#### 4. GDM 抢占显示（已清除）
+
+装 `gnome-session` 时连带装了 GDM，它以 `gdm-greeter` 身份一直持有 DRM 主设备，
+X/phosh 都拿不到屏幕。`systemctl disable --now gdm` 后释放。
+
+#### 5. 新发现：有 DRM 主设备时 fbdev 失效
+
+实测：任何 DRM master 在跑时，往 `/dev/fb0` 写 18 MB 全 0xFF，回读只剩 835 字节。
+**fbdev 不能作为输出通道**，桌面必须自己当 DRM 主设备（X modesetting 或 phoc）。
+这解释了“写进 fb0 却看不到”。
+
+#### 当前状态
+
+| 项 | 状态 |
+|---|---|
+| 显示链路 | ✅ 人眼确认 |
+| GPU | ✅ gpu-initialized: 1 |
+| 面板生命周期 | ✅ 幂等保护 |
+| GDM | ✅ 已禁用 |
+| 桌面合成 | ⏳ X(modesetting)/phoc 需拿到 DRM master 并真正出帧 |
+
 ## 2026-10-31 17:35 关键 bug：init 的重绘代码在有 rootfs 时永不执行
 
 `ir-root/init` 的结构：
