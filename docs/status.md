@@ -3,6 +3,32 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 17:05 Wi-Fi 固件升级为上游版本（v92，待测）
+
+之前用的是 Android `/vendor/firmware_mnt/image/kiwi/` 里的厂商固件，加载后整机会硬挂。
+现在改成**上游 linux-firmware**：
+
+```sh
+wsl.exe -d Ubuntu-26.04 -u root          # WSL 有 root
+apt-get install -y linux-firmware        # 20260319.git217ca6e4
+# /usr/lib/firmware/ath11k/WCN6855/hw2.0/*.zst
+zstd -d amss.bin.zst m3.bin.zst board-2.bin.zst regdb.bin
+```
+
+得到（全部放进 initramfs 的 `/lib/firmware/ath11k/WCN6855/hw2.0/`）：
+
+| 文件 | 大小 |
+|---|---|
+| `amss.bin` | 4,988,928 |
+| `m3.bin` | 266,684 |
+| `board-2.bin` | 7,237,392（多板型通用）|
+| `regdb.bin` | 24,310（另放一份到 `/lib/firmware/`）|
+
+这是我们第一次拿到**与主线 ath11k 匹配**的固件（厂商那份 QMI 版本未必兼容）。
+产物：`other/abl-nuwa-v92-wifi-up.img` 35,909,632 B `5aea0ef7…`
+
+注意：v92 保留了 `nuwa-pattern.raw.gz`（21.7 KB），启动仍会画彩条，可同时验证显示。
+
 ## 2026-10-31 17:00 显示判定的决定性手段：init 直接画测试图案（v91）
 
 黑屏归因是「repaint 刷黑 + 无 compositor」。为了能一眼判定显示链路，改为在 init 末尾把一张
