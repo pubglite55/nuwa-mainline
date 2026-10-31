@@ -3,6 +3,52 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 17:20 内核启用模块支持，ath11k 改为手动加载（v94）
+
+#### 发现：内核根本没开 `CONFIG_MODULES`
+
+之前想 `-m ATH11K` 一直被改回 `y`，根因是 **`# CONFIG_MODULES is not set`**：
+没有模块支持时，所有 tristate 符号都会被强制提升为 `y`，`.config` 里 `=m` 的数量是 **0**。
+
+#### 现在
+
+```
+CONFIG_MODULES=y
+CONFIG_ATH11K=m
+CONFIG_ATH11K_PCI=m
+kernelrelease = 7.3.0
+```
+
+模块装进 rootfs：
+
+```
+/lib/modules/7.3.0/kernel/drivers/net/wireless/ath/ath11k/ath11k.ko
+/lib/modules/7.3.0/kernel/drivers/net/wireless/ath/ath11k/ath11k_pci.ko
+```
+
+并且**禁止开机自动加载**（否则 udev 会在 PCI 设备出现时立刻装载，等于没改）：
+
+```
+/etc/modprobe.d/nuwa-wifi.conf:
+  blacklist ath11k_pci
+  blacklist ath11k
+```
+
+blacklist 只影响自动加载，手动 `modprobe ath11k_pci` 仍然可用。
+
+#### 为什么这么做
+
+技能库 `experience/wireless.md` 记录：「一次启动内重新加载 Wi-Fi 驱动会固件崩溃甚至内核崩溃，
+实验需要换模块时必须重启」。之前 Wi-Fi 固件阶段把整机硬挂死，无法定位是哪一层。
+改成手动加载后：先确认系统健康 → 再 `modprobe` → 即使挂死，也知道**触发点就是这一次 modprobe**。
+
+#### 产物
+
+| 文件 | 说明 |
+|---|---|
+| `other/abl-nuwa-v94-wifimod.img` 35,946,496 B `2a0cd061…` | ath11k 模块化，开机不碰 |
+| `other/nuwa-rootfs-mod.simg` | 含模块 + 上游 wifi 固件 + blacklist |
+
 ## 2026-10-31 17:10 修电池属性刷屏（ADSP 结构体大小不匹配）
 
 现象：dmesg 每秒刷 `invalid payload length for 0x13 request: 132` + `time_to_full_avg ... -110`。
