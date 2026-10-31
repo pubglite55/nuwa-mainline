@@ -3,6 +3,40 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 15:25 GPU：ZAP 签名问题解决，GMU 仍超时（当前软件渲染）
+
+#### 关键发现（来自 fuxi 的 GPU 定位文档）
+
+`/vendor/firmware` 里的 `a740_zap.*` 是**高通测试密钥签名**，PAS 会拒绝；
+小米签名版在 **`/odm/firmware`**（实测 `a740_zap.mdt` 两边 md5 不同：`8aa66cd6…` vs `51ebdf38…`）。
+`/odm/firmware/a740_zap.mbn`（单文件 12,088 B）可直接用。
+
+#### 固件放置（都在 initramfs 的 `/lib/firmware/qcom/`）
+
+| 文件 | 来源 |
+|---|---|
+| `a740_sqe.fw` | `/vendor/firmware` |
+| `a740_zap.mbn` | **`/odm/firmware`**（小米签名）|
+| `gmu_gen70200.bin` | `/vendor/firmware`（驱动要的就是这个名字，**不要**改名为 `a740_gmu.bin`）|
+
+#### 进展
+
+- 之前：`failed to load a740_sqe.fw` → 已解决
+- 之前：`failed to load qcom/gmu_gen70200.bin` → 已解决（改名错误）
+- 现在：ZAP 的 `-22` 消失 ✓，但 GMU 仍超时：
+
+```
+a6xx_hfi_wait_for_msg_interrupt: HFI_H2F_MSG_GX_BW_PERF_VOTE timed out
+a6xx_gmu_set_oob: Timeout waiting for GMU OOB set GPU_SET: 0x0
+adreno_load_gpu: gpu hw init failed: -110
+gpu_cc_gx_gdsc status stuck at 'on'
+```
+
+#### 当前桌面状态
+
+`systemctl is-active phosh` = **active**；`phoc` 占用 ~28% CPU ⇒ **软件渲染**在跑，
+`/dev/dri/card1` 与 `renderD128` 都在。GPU 硬件加速待解决（GDSC/时钟/OPP 方向）。
+
 ## 2026-10-31 15:05 桌面装好了：Phosh 在手机上跑起来
 
 #### 怎么在没有网络的情况下装包（重要方法）
