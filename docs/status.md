@@ -71,6 +71,57 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 22:10 按键事件链路不通 + 触控根因（需厂商固件）
+
+#### 按键：内核层完全不产生事件（不是映射问题）
+
+实测手段：直接 `dd` 读设备节点 10 秒，用户按键期间**零字节**。
+
+```
+pmic_pwrkey  → event0  已注册
+pmic_resin   → event1  已注册
+gpio-keys    → event3  已注册
+ST FTM5      → event2  已注册
+```
+
+并且用 `/proc/*/fd` 扫描确认**没有任何进程占用这些设备**（只有我们自己的 dd）。
+结论：PMIC pon/pwrkey 与 gpio-keys 的**中断没有真正上报**，是驱动/DTS 层面的缺口，
+不是 udev 映射、不是 logind grab。
+
+> 这也推翻了之前“按电源键导致黑屏”的判断 —— 那次黑屏更可能是 phoc 空闲熄屏超时。
+
+已安装但暂时无效的东西（等按键 IRQ 修好即可工作）：
+
+- `/usr/local/bin/nuwa-powerkey`：监听 F24，把背光在 0 ↔ max 之间切换（2 秒去抖），**不动面板电源**
+- `/etc/systemd/system/nuwa-powerkey.service`（已 enable）
+- `/etc/udev/hwdb.d/90-nuwa-power.hwdb`：`KEYBOARD_KEY_74=f24`（让 phoc 忽略电源键）
+
+#### 触控根因：缺厂商固件 `st_fts_m2.ftb`
+
+厂商 DTB（`fdt-live.dts:20947`）关键属性：
+
+```
+fts,default-fw-name = "st_fts_m2.ftb";
+fts,support-super-resolution = <1>;
+fts,x-max = <0x3840>;  fts,y-max = <0x7d00>;   /* 14400 x 32000，1/10 像素 */
+spi-max-frequency = <0xb71b00>;               /* 12 MHz */
+```
+
+主线驱动 `st-ftm5.c`（与 fuxi 完全相同）**没有任何固件/配置下载逻辑**，
+只发 3 字节的 sense_on。控制器因此停留在“只上报 `f3 12` 错误、不扫描”的状态。
+
+本地资源：
+
+- ❌ 找不到 `st_fts_m2.ftb`（rootfs、WSL、Windows 侧全盘搜索均无）
+- ✅ 有设备对应的厂商驱动源码：`/home/l1872/nuwa/lineage-modules-a/qcom/opensource/touch-drivers/st/`（fts.c / fts.h / fts_lib/）
+
+#### 下一步（两条路，都需要先把固件拿到）
+
+1. **取固件**：进 Android，`adb pull /vendor/firmware/st_fts_m2.ftb`（或 `/odm/firmware/`），
+   再在主线驱动里实现 config/firmware 下发，然后 `sense_on`
+2. **改用厂商驱动**：把 `lineage-modules-a/.../touch-drivers/st` 编成 out-of-tree 模块（`fts_ts.ko`），
+   它在本机 Android 上是验证过的，适配输入子系统/GPIO/regulator 后直接可用
+
 ## 2026-10-31 21:20 电源键、触控排查
 
 #### 电源键：已彻底屏蔽（绕过，不是修好）
