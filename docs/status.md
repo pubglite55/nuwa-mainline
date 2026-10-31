@@ -3,6 +3,32 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 12:35 触控打通：移植 fuxi 的主线 `st-ftm5` 驱动
+
+厂商 blob（`fts_spi`）在 nuwa 上必然挂死/失联，改为移植 fuxi 自己写的主线驱动：
+
+| 来源 | `fuxi-ref/source/linux-untracked/drivers/input/touchscreen/st-ftm5.c`（367 行） |
+|---|---|
+| 落地 | `drivers/input/touchscreen/st-ftm5.c` + Kconfig `TOUCHSCREEN_ST_FTM5` + Makefile |
+| DTS | `&spi4` 下 `touchscreen@0`，`compatible = "st,ftm5"` |
+
+关键点：
+
+- 触控在硬件 SPI4（`0xa90000`），不是原来的 `spi4-gpio` 位bang
+- `reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>`、`interrupts-extended = <&tlmm 25 IRQ_TYPE_LEVEL_LOW>`
+- `touchscreen-size-x/y = <14400>/<32000>`（驱动按 1/10 像素上报，自动换算）
+- 厂商驱动 `TOUCHSCREEN_ST_FTS_V521_SPI` 已关闭
+
+实测日志：
+
+```
+[    1.258320] st-ftm5 spi2.0: chip 3640 fw 0018 cfg 0022 panel 3199x1439
+[    1.281640] input: ST FTM5 Touchscreen as .../input2
+N: Name="ST FTM5 Touchscreen"
+```
+
+产物：`other/abl-nuwa-v74-touch.img` 12,857,344 B `f16d3eb9…`
+
 ## 2026-10-31 12:15 **Ubuntu 26.04 在 nuwa 上跑起来了**
 
 ```
