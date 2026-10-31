@@ -3,6 +3,24 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 17:00 显示判定的决定性手段：init 直接画测试图案（v91）
+
+黑屏归因是「repaint 刷黑 + 无 compositor」。为了能一眼判定显示链路，改为在 init 末尾把一张
+**彩条 + 灰阶渐变**的测试图案直接写进 `/dev/fb0`：
+
+- 图案 1440×3200×4 = 18,432,000 B 原始体积，但纯色块 **gzip 后只有 21.7 KB**，塞进 initramfs 毫无压力
+- `bin/repaint` 逻辑：有 `/lib/nuwa-pattern.raw.gz` 就 `gunzip -c > /dev/fb0`，否则退回铺黑
+
+判读方法（无需任何工具）：
+
+| 屏幕现象 | 结论 |
+|---|---|
+| 8 条竖彩条（红绿蓝黄品青白黑）+ 下半部灰阶渐变 | ✅ 显示链路端到端正常 |
+| 全黑 | ❌ 画面没送到面板（DSC/DSI 层问题）|
+| 花屏/错位/条纹错乱 | ❌ 像素格式或行宽问题 |
+
+产物：`other/abl-nuwa-v91-pattern.img` 35,844,096 B `83b00f11…`
+
 ## 2026-10-31 16:55 黑屏归因修正：GPU 失败不影响显示，黑是我们自己刷的
 
 查 `drivers/gpu/drm/msm/adreno/adreno_device.c:adreno_load_gpu()`：失败时**只返回 NULL**，
