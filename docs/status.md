@@ -1,5 +1,73 @@
 # nuwa 主线移植 — 当前状态
 
+> 2026-10-31 晚摘要（历史记录见下方按时间倒序的条目）
+
+## 一句话状态
+
+**软件侧全部就绪，硬件侧唯一阻塞：手机断电，无法上机。** 需插充电头充电后开机。
+
+## 已验证可用（有真机证据）
+
+| 能力 | 证据 |
+|---|---|
+| ABL 直启主线内核 | `fastboot boot` 成功，串口 shell 可用 |
+| Ubuntu 26.04 用户空间 | 登录、apt、systemd 正常 |
+| 双系统往返 | Linux ↔ Android 多次来回 |
+| 显示 modeset | `connector DSI-1: Modesetting with 1440x3200 @ 60.000 Hz` |
+| 触控 | st-ftm5 绑定，input 节点存在 |
+| ADSP | `remote processor adsp is now up`，`audio_pd` 就绪 |
+| 电量/充电 | `qcom-battmgr-bat` capacity 100（读得到）|
+| USB 网络 | NCM gadget 枚举，主机侧网卡 Up |
+| 内核模块支持 | `CONFIG_MODULES=y`，模块可加载（本轮新开）|
+
+## 待验证（镜像已构建，设备离线）
+
+| 项 | 镜像 | 判据 |
+|---|---|---|
+| 显示画面 | `v91-pattern` | 屏幕出 8 条彩条 + 灰阶 |
+| GPU/GMU | `v90-gpu4` | 无 `gpu hw init failed` |
+| 桌面 | `v94-wifimod` + `nuwa-rootfs-mod.simg` | `nuwa-x` active，X 进程在跑 |
+| Wi-Fi | `v94-wifimod`（手动 modprobe）| `wlan0` 出现，不挂死 |
+
+## 已知结论（避免重复排查）
+
+1. GPU 初始化失败**不会**打掉显示（`adreno_load_gpu` 只返回 NULL）
+2. 黑屏 = init 的 `repaint` 刷黑 + 无 compositor，不是面板问题
+3. wlroots 系（phoc/sway/weston）必须有 GPU 才能建 allocator ⇒ 无 GPU 时只能用 Xorg+fbdev
+4. 厂商 ZAP 是测试密钥签名，PAS 拒收；必须用 `/odm/firmware/a740_zap.mbn`
+5. GPU 驱动要的固件名是 `qcom/gmu_gen70200.bin`，**不是** `a740_gmu.bin`
+6. 设备树 zap 路径是 `qcom/sm8550/nuwa/a740_zap.mbn`，放错等于没加载
+7. 没有 `CONFIG_MODULES` 时所有 `=m` 会被强制提升为 `y`
+8. 厂商 ADSP 的 battmgr 回包比主线预期大（132 B），需放宽长度校验
+
+## 产物清单
+
+| 文件 | sha256 前缀 |
+|---|---|
+| `other/abl-nuwa-v94-wifimod.img` | `2a0cd061` |
+| `other/abl-nuwa-v93-battfix.img` | `887fa996` |
+| `other/abl-nuwa-v92-wifi-up.img` | `5aea0ef7` |
+| `other/abl-nuwa-v91-pattern.img` | `83b00f11` |
+| `other/abl-nuwa-v90-gpu4.img` | `74e3a194` |
+| `other/nuwa-rootfs-mod.simg` | 含模块/固件/桌面/自检 |
+
+## 唯一阻塞与下一步
+
+```
+阻塞: 手机 usb=0，无任何枚举，多轮持续
+处置: 插充电头充电 15-30 分钟 → 开机 → 告知
+```
+
+设备上线后执行（一步一验）：
+
+```
+cycle.ps1 -Image other\abl-nuwa-v91-pattern.img -Tag disp
+cycle.ps1 -Image other\abl-nuwa-v90-gpu4.img -Tag gpu -DumpReport
+cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.simg -Tag desk -DumpReport
+```
+
+---
+
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
