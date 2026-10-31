@@ -71,6 +71,55 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 19:50 Phosh 接管显示：CRTC 已设但 vblank fps = 0（TE 未驱动）
+
+#### 进展：phoc/phosh 真正拿到了 DRM 主设备
+
+关掉 `CONFIG_DRM_FBDEV_EMULATION` 后（v99/v100，`/dev/fb0` 消失），phoc 不再被 fbdev 抢占：
+
+```
+Output 'DSI-1' added ('(null)'/'(null)'/'(null)'), 70mm x 156mm
+Enabling shell mode
+crtc:103 width:1440 height:3200     ← 之前一直是 0x0
+mixer:0 ctl:0 width:720 height:3200
+Atomic commit failed: 2（仅启动瞬间，此前是 38）
+phoc CPU 76%（pixman 软件渲染）
+```
+
+同时**去掉面板幂等保护**（v100）——保护会让面板跳过 init，phoc 设模式时 DSI 配合不上。
+去掉后面板初始化完全正常：
+
+```
+NUWA_PRE_RESET pm=159 r=0                       ← 读 power mode 成功
+NUWA_PPS_PARSE ok xmit=512 dec=646 bpp=128 bpc=10 lbd=11
+NUWA_PANEL_HS pm=159 (r=0)
+NUWA_PANEL_DEBUG id=a00000 (r=1,1,1) pm=159(r=0)   ← 面板 ID 读到了
+```
+`pm=159`（0x9f）= 面板处于 normal mode，DSI 双向通信正常。
+
+#### 但屏幕仍黑：vblank fps = 0
+
+```
+/sys/kernel/debug/dri/1/crtc-0/status:
+  vblank fps:0  count:124  total:144316ms  total_framecount:316
+```
+
+CRTC 已配置、plane 已挂、phoc 在 76% CPU 渲染，但 **DPU 实际没有在出帧**。
+对比：fbdev 模式下曾测到 `vblank fps: 17~26`，说明 DPU 本身能出帧。
+
+#### 结论与下一步
+
+面板是**命令模式(command mode)** DSI，msm 需要 **TE 信号**驱动 kickoff 才会把帧推给面板。
+我们的 TE 走 GPIO86（厂商 mdp_vsync），当前没生效 ⇒ 没有 kickoff ⇒ 帧不出去 ⇒ 黑屏。
+而 fbdev 路径下 msm 在每次 fb 写入时立即发一帧，所以图案能看到。
+
+两条修法（下次开工按顺序试）：
+
+1. **改用 video mode 操作**：命令模式面板也可让 msm 以 video mode 驱动，帧连续输出，不依赖 TE
+2. **修 TE**：确认 GPIO86 的 `qcom,mdp-vsync` / `te-source` 配置，或让面板用 `MIPI_DSI_MODE_VIDEO` 标志
+
+产物：`other/abl-nuwa-v100.img` `7a2d39d0…`（无 fbdev + 无幂等保护，当前最优显示镜像）
+
 ## 2026-10-31 18:30 真机里程碑：显示点亮 + GPU 初始化成功
 
 #### 1. 显示通了（人眼确认）
