@@ -3,6 +3,70 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 08:10 关键突破：**屏幕已点亮**，剩下是 DSC 解码问题
+
+#### 一、v49 三阶段 TE 自检（一次启动给出完整链条）
+
+```
+after-rails  edges=24  last=1     ← 面板活着，TE 60Hz 在跳
+after-reset  edges=0   last=0     ← 复位把面板打回睡眠
+after-init   edges=0   last=0     ← 复位后唤醒失败
+```
+
+#### 二、v48：**用户目视确认出现滚动文字 + 花屏**
+
+配置为「不复位 + 完整初始化」。⇒ **面板、DSI 链路、帧传输全部打通**，
+剩下的只是“画面内容解码不对”。
+
+#### 三、DSC 花屏的根因链（源码级）
+
+1. `drm_dsc_compute_rc_parameters()` 第一行：
+   `slice_bits = 8 * vdsc_cfg->slice_chunk_size * vdsc_cfg->slice_height;`
+2. 我们的 panel 驱动**从未设置 `slice_chunk_size`**（值为 0）
+3. ⇒ RC 参数计算失败（实测日志 `NUWA_PPS_OVERRIDE rc compute failed`）
+4. ⇒ `rc_range_params` / `rc_buf_thresh` / `initial_xmit_delay` 全为 0
+5. ⇒ DPU 的 `DSC_CHUNK_SIZE` 等寄存器被写成 0，硬件按“每片 0 字节”切 DSC
+6. ⇒ 面板解出来的就是花屏
+
+补齐字段（照 `panel-ilitek-ili9882t.c` 这个能工作的 DSC 面板）：
+`slice_chunk_size=720`、`mux_word_size=DSC_MUX_WORD_SIZE_8_10_BPC`、
+`line_buf_depth=bpc`、`rc_model_size/rc_edge_factor/rc_tgt_offset_*` 常量、
+`rc_buf_thresh[14]` 规范序列。
+
+#### 四、PPS 逐字节对比（客观证据，不需要人眼）
+
+`bytes_diff=8/128`，差异集中在 RC 参数与 `convert_rgb`：
+
+```
+厂商: 120000ab 30800c80 ... 02000286 0020029e 000a000d 0456030d
+我们: 120000aa 20800c80 ... 02000268 00f802be 0001000c 0400030d
+```
+
+两边都是 **8bpp、block-pred=1**；厂商 `line_buf_depth=11`、`convert_rgb=1`，
+我们是 10 和 0；其余差异是 RC 参数（`initial_xmit_delay` 512/646 等）。
+
+#### 五、v58（当前最佳）：解析厂商 PPS 灌入 dsc_config
+
+`CONFIG_NUWA_PPS_PARSE`：在 `send_seq` 遇到厂商 `0x9E` 时，把 128 字节 PPS 解成
+`drm_dsc_config` 的 RC 字段（同时原样发送厂商 PPS），实现与厂商逐字段一致。
+实测：`NUWA_PPS_PARSE ok xmit=512 dec=646 bpp=128 bpc=10 lbd=11 conv=1`（仅 1 次，正确）
+
+| 项 | 值 |
+|---|---|
+| TE(gpio86) | 11 高 / 9 低（跳变） |
+| CRTC | vblank 30fps，帧数 325，无 underrun |
+| encoder | vsync 1823，frame_done 超时 0 |
+| DSC | 与厂商 PPS 逐字段一致 |
+
+产物：`other/abl-nuwa-disp-v58-ppsparse2.img` 12,853,248 B `8b469195…`
+
+#### 六、踩过的坑
+
+- 解析块最初没加 `dtype==LONG_WRITE && plen==129 && payload[0]==0x9e` 限定，
+  对每个长写包都执行，把随机数据当 PPS，DSC 配置被破坏 → 面板停 TE → vblank 超时
+- 通过串口发含引号的命令（如 `tr "\000"`）会被 PowerShell 转义吞掉，
+  shell 卡在续行 `>`，只能断电重启恢复——后续一律写脚本文件再执行
+
 ## 功能状态表（只用规范状态词）
 
 规范词：**待调研** / **有源码线索** / **离线通过** / **真机启动** / **真机通过** / **真机失败**
@@ -15,7 +79,7 @@
 | 内核 cmdline 生效 | **离线通过** | 空 `-append` 下仍有完整 cmdline（FORCE 验证） |
 | 4 KiB FAT16 挂载 | **有源码线索** | EDK2 九项检查全过，但 UFSDxe 行为未知 |
 | 显示（efifb，UEFI 路线） | **真机失败** | 启动早期有输出，随后黑屏（见 §2026-10-29） |
-| 显示（原生 MSM DSI + panel 驱动，ABL 路线） | **真机失败** | 参数全部离线核对一致，但内核疑似在 `setup_arch` 阶段就死（0 RAM），根本没走到 msm probe；等 v10 修正内存节点后重测 |
+| 显示（原生 MSM DSI + panel 驱动，ABL 路线） | **真机失败（但已点亮）** | v48 用户目视：出现滚动文字 + 花屏 ⇒ 面板/DSI/帧传输已通；剩余为 DSC 解码参数问题，见 §2026-10-31 08:10 |
 | ABL 直启（recovery_a 放 boot.img v1） | **真机失败** | 写入成功（`Sending/Writing OKAY`）也能启动，但卡第一屏且无任何 USB 枚举；疑似内建 DTB 的 memory size=0，见 §2026-10-30 真机首刷 |
 | 触控（FTS） | **待调研** | 驱动已内建，需真机验证事件 |
 | USB 网络（NCM） | **待调研** | init 逻辑完整，需真机验证 usb0 |
