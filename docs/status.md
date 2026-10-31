@@ -71,6 +71,63 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 23:45 找到厂商 SPI 版触控驱动源码（关键突破点）
+
+#### 重大发现：本机就有设备对应的 SPI 触控驱动源
+
+```
+/home/l1872/nuwa/lineage-kernel-a/drivers/input/touchscreen/fts_spi/
+  fts.c  fts.h  fts_proc.c  fts_limits.h  fts_lib/
+```
+
+Android 侧实际加载的模块就叫 `fts_touch_spi`（不是 `st/` 目录里那份 I2C 的）。
+这解决了一直以来的困惑：厂商有 **SPI 版**实现，和 `st/` 下的 I2C 版是两套。
+
+#### 帧格式对比（核心差异）
+
+厂商 SPI 读是**两段式**（`fts_lib/ftsIO.c: fts_writeRead`）：
+
+```c
+transfer[0].len = cmdLength; transfer[0].tx_buf = cmd;  transfer[0].rx_buf = NULL;
+transfer[1].len = byteToRead; transfer[1].tx_buf = NULL; transfer[1].rx_buf = outBuf;
+```
+
+主线 `st-ftm5.c` 用的是**单段全双工**（`tx_buf` = 命令 + 0，`rx_buf` 一起收）。
+
+#### 实测验证
+
+用 debugfs 通道发 `a0 00 01` 后读回：
+
+```
+NUWA_RAW: 00 87 | 43 05 01 00 00 00 00 01 | 43 01 a0 00 01 00 00 00 | ... | 34 30
+```
+
+- `00 87` = 命令回显（芯片把收到的命令字节回吐一位）
+- 之后才是真实数据；尾部 `34 30` 是 ASCII "40"（系统信息里的 chip id 字符）
+- ⇒ **全双工读的偏移其实是对的**（数据从第 3 字节开始，对应驱动里 `&rx[1]`）
+
+#### 命令常量（来自 `fts_spi/fts_lib/ftsHardware.h`）
+
+| 名称 | 值 |
+|---|---|
+| `FIFO_CMD_READALL` / `READONE` | **0x87** ✓（与主线一致）|
+| `FTS_CMD_HW_REG_R/W` | 0xFA（FTI 变体）|
+
+#### 失败尝试：改成两段式读
+
+把 `ftm5_read()` 改成厂商的两段式后（v117/v118）：**probe 直接 -110 失败**
+（`controller did not become ready`），加 `rx[0]/rx[1]` 双偏移容错也无效。
+⇒ 这块芯片/平台组合下，两段式传输拿不到数据；全双工反而是可用的。
+已回滚驱动源码，设备回到 v111。
+
+#### 结论与下一步
+
+1. 读命令（0x87）与读取偏移都已确认正确
+2. **仍缺的是“让控制器进入扫描态”的命令序列**
+3. 厂商 `fts_spi` 源码里一定有完整初始化流程（`fts_startup` / `fts_mode_handler`），
+   下一步应逐段比对：**上电 → 复位 → 下发配置 → 使能中断/扫描** 每一步的字节
+4. 可用工具：`/sys/kernel/debug/ftm5cmd`（v115+ 镜像内置）可在运行时试任意命令
+
 ## 2026-10-31 23:00 触控：建立运行时可调调试通道，协议仍未破
 
 #### 新增工具：debugfs 命令通道（重要）
