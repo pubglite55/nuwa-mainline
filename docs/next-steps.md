@@ -2,6 +2,39 @@
 
 > 前提：所有产物已就绪，见 `status.md`。
 
+## ⚠️ 当前唯一阻塞：手机完全断电（2026-10-31 晚）
+
+多轮探测 `usb=0`、无任何 USB 枚举。判断是深度亏电（此前 phoc 崩溃循环空转 CPU 把电耗光）。
+**需要插充电头充 15–30 分钟再开机**（Linux/fastboot 下不能净充电，必须从关机/Android 侧充）。
+
+### 设备一上线，按这个顺序做（一步一验，失败就停）
+
+| 顺序 | 命令 | 判据 | 失败含义 |
+|---|---|---|---|
+| 1 | `cycle.ps1 -Image other\abl-nuwa-v91-pattern.img -Tag v91-disp` | 屏幕出现 **8 条竖彩条 + 灰阶渐变** | 全黑 = DSI/DSC 层；花屏 = 像素格式/行宽 |
+| 2 | `cycle.ps1 -Image other\abl-nuwa-v90-gpu4.img -Tag v90-gpu -DumpReport` | `dmesg` 无 `gpu hw init failed`，`/dev/dri/renderD128` 可用 | 仍有 GMU OOB 超时 = 电源域/带宽投票问题（技能库提示先查显示侧资源回收）|
+| 3 | `cycle.ps1 -Image other\abl-nuwa-v93-battfix.img -Rootfs other\nuwa-rootfs-x.simg -Tag x-desk -DumpReport` | `/var/log/nuwa-report.log` 里 `nuwa-x` = active、`X` 进程 CPU > 0、fb0 非零 | X 起不来 = 查 `/var/log/Xorg.0.log` |
+| 4 | `cycle.ps1 -Image other\abl-nuwa-v92-wifi-up.img -Tag v92-wifi -DumpReport` | `wlan0` 出现且无 RDDM | **可能硬挂死**（此前厂商固件会挂），务必放在最后一步再试 |
+
+产物清单：
+
+| 镜像 | sha256 前缀 | 说明 |
+|---|---|---|
+| `abl-nuwa-v93-battfix.img` | `887fa996` | 稳定版：彩条 + zap 修正 + 电池刷屏修复 |
+| `abl-nuwa-v91-pattern.img` | `83b00f11` | 仅彩条（显示判定专用）|
+| `abl-nuwa-v90-gpu4.img` | `74e3a194` | GPU：zap 放在 DTS 指定路径 |
+| `abl-nuwa-v92-wifi-up.img` | `5aea0ef7` | Wi-Fi：上游 linux-firmware 固件 |
+| `nuwa-rootfs-x.simg` | — | Xorg+fbdev 桌面 + 开机自检服务 |
+
+### 已排除的假设（别再重复查）
+
+- GPU 失败**不会**打掉显示（`adreno_load_gpu` 只返回 NULL）
+- 黑屏是 init 的 `repaint` 自己刷的 + 没有 compositor，不是面板问题
+- phoc 起不来是因为 **wlroots 拿不到 DRM allocator**（需要 GPU），不是 XDG/权限问题
+- 互连（interconnect）配置齐全，`HFI_H2F_MSG_GX_BW_PERF_VOTE` 超时不是 ICC 缺失导致
+
+---
+
 ## ⚠️ 当前路线（2026-10-30 起）：ABL 直启，写入 `recovery_a`
 
 > 旧 UEFI 流程（下面「第 0 步」之后的内容）保留作回退参考。原理见 [abl-direct-boot.md](abl-direct-boot.md)。
