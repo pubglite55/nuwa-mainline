@@ -60,7 +60,22 @@ after-init   edges=0   last=0     ← 复位后唤醒失败
 
 产物：`other/abl-nuwa-disp-v58-ppsparse2.img` 12,853,248 B `8b469195…`
 
-#### 六、踩过的坑
+#### 六、v58 当前运行状态（设备上正跑着）
+
+```
+fb0        = ff ff ff ff   (纯白)
+backlight  = 4095          (满)
+crtc       = vblank 29fps, total_framecount 4339, underrun 0
+enc        = vsync 计数增长, frame_done 超时 0
+TE(gpio86) = 跳变
+```
+
+⇒ 从 Linux 侧看一切正常。**是否真的显示白屏，等用户目视确认。**
+
+另：内核未启用电池驱动，`/sys/class/power_supply/` 为空，
+因此无法用“白屏 vs 黑屏的功耗差”做客观判据。
+
+#### 七、踩过的坑
 
 - 解析块最初没加 `dtype==LONG_WRITE && plen==129 && payload[0]==0x9e` 限定，
   对每个长写包都执行，把随机数据当 PPS，DSC 配置被破坏 → 面板停 TE → vblank 超时
