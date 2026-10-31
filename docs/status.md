@@ -3,6 +3,55 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 15:05 桌面装好了：Phosh 在手机上跑起来
+
+#### 怎么在没有网络的情况下装包（重要方法）
+
+USB 网卡那条路走不通（主机与手机 L2 不通），改用**离线挂载 + QEMU 用户态**：
+
+```sh
+wsl.exe -d Ubuntu-26.04 -u root            # WSL 有 root 和 loop 设备
+mount -o loop,rw rs4b.img /mnt/nuwa-img
+mount --bind /proc /sys /dev ...
+chroot /mnt/nuwa-img /bin/bash -c 'apt-get update && apt-get install -y phosh ...'
+```
+
+关键点：**不需要 qemu-aarch64-static** —— WSL 已注册 binfmt_misc（`qemu-aarch64`），
+chroot 里直接跑 arm64 二进制即可。（原先那份 `qemu-aarch64-static` 是**截断损坏**的，会段错误。）
+
+apt 源改成了 `http://ports.ubuntu.com/ubuntu-ports`（suite `resolute`），
+WSL 能直连该源，1 分钟拉完 29.7 MB 索引。
+
+#### 装了哪些
+
+`phosh` + `phoc` + `squeekboard` + `network-manager`，共 **469 个包**，镜像 512 MiB → 1.37 GiB。
+
+#### 自启
+
+`/etc/systemd/system/phosh.service`：
+
+```ini
+ExecStart=/usr/bin/phosh-session
+TTYPath=/dev/tty1
+Environment=XDG_SESSION_TYPE=wayland
+WantedBy=multi-user.target
+```
+
+并移除 `getty@tty1` 避免抢 tty。实测 `systemctl is-active phosh` = **active**，
+进程是 `phoc -v -S -C /usr/share/phosh/phoc.ini -E "gnome-session --session=phosh"`。
+
+#### 已知问题：GPU 固件缺失
+
+```
+msm_dpu ae01000.display-controller: [drm:adreno_request_fw] *ERROR* failed to load a740_sqe.fw
+phoc: MESA: error: get_param:235: get-param failed! -6
+phoc: libEGL warning: egl: failed to create dri2 screen
+```
+
+`/dev/dri` 里 `card1` 与 `renderD128` 都在，但 Adreno 740 的 `a740_sqe.fw` / `a740_gmu.bin` /
+`a740_zap.*` 还没从 Android 取出来放进固件目录 ⇒ 目前是软件渲染。
+下一步：从 `/vendor/firmware/` 取 a740* 放进 initramfs 的 `/lib/firmware/qcom/`。
+
 ## 2026-10-31 14:15 ath11k 挂死已确认是内核层；新增诊断开关与阶段日志
 
 #### 结论：不是 systemd，是内核真挂死
