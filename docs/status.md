@@ -3,6 +3,21 @@
 更新时间：2026-10-30
 **本文件是唯一的进度来源。** 操作步骤见 [next-steps.md](next-steps.md)，技术债见 [tech-debt.md](tech-debt.md)。
 
+## 2026-10-31 16:55 黑屏归因修正：GPU 失败不影响显示，黑是我们自己刷的
+
+查 `drivers/gpu/drm/msm/adreno/adreno_device.c:adreno_load_gpu()`：失败时**只返回 NULL**，
+调用点 `msm_drv.c:load_gpu()` 忽略返回值，`priv->gpu` 留空，**KMS/显示不受影响**。
+所以“GPU 起不来 ⇒ 显示挂掉”这个假设不成立。
+
+黑屏的真正原因是链式的：
+
+1. initramfs 的 init 末尾执行 `repaint`（`dd if=/dev/zero of=/dev/fb0`）→ **整屏刷黑**
+2. phoc 因为拿不到 allocator 反复崩溃 → 没有东西再往上画
+3. 结果就是稳定黑屏，但显示链路其实是通的（`DSI-1 modeset 1440x3200@60` 有日志）
+
+⇒ 结论：**只要有一个能在 fb0 上画东西的 compositor，屏幕就会亮**。
+这就是选 Xorg + fbdev 而不是 wlroots 系（phoc/sway/weston 都要 EGL）的理由。
+
 ## 2026-10-31 16:20 桌面为什么看不见：wlroots 拿不到 allocator
 
 逐步排查得到的链条：
