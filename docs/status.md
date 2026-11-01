@@ -102,6 +102,40 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 14:50 中断前置已生效，但芯片从不拉 INT；电源电压值可疑
+
+#### v159 结果
+
+```
+NUWA_IRQ using 213 (gpio=577)
+NUWA_IRQ_FIRST install=0        ← 中断已在复位前注册成功
+System resetting... → 仍超时
+chip_id0:0x0 → Probe Failed
+```
+
+#### 实测证据
+
+| 检查项 | 结果 | 含义 |
+|---|---|---|
+| `/proc/interrupts` 213 | 已注册 `msmgpio 25 Level fts`，**计数 0** | 芯片从未拉低 INT |
+| `vreg_l12b_1p8` | 1800 mV，enabled | VDD 正常 |
+| `vreg_l6m_1p8` | **3008 mV**，enabled | 名字是 1.8V 轨却输出 3.0V，需核对 AVDD 期望值 |
+| SPI 回显 | `00 87 ...` | 芯片在收命令（MISO 有驱动）|
+| 寄存器读 | 全 0 | 芯片未进入可读状态 |
+
+#### 结论
+
+芯片**有电、能收命令、但既不报 INT 也不回数据** —— 卡在“复位后未进入正常模式”。
+复位时序为 `拉低 10ms → 释放 → 轮询 GENERAL_TIMEOUT`，与厂商实现一致。
+
+#### 下一步（按可能性排序）
+
+1. **核对 AVDD 期望电压**：`pm8010m_l6` 在厂商 DTS 里的 regulator 约束值；
+   若应为 1.8V 而我们配成 3.0V，芯片可能工作异常
+2. 复位释放后加 `mdelay(100)` 再轮询（FTS 上电稳定时间）
+3. 确认 INT 引脚是否真的连到 gpio25（可用 devmem 读 tlmm 输入寄存器观察触摸时电平变化）
+4. 若 INT 始终无反应，考虑该机型触控走的是 I2C 而非 SPI4（需回厂商 DTB 复核 `reg`/控制器）
+
 ## 2026-11-01 14:45 触控：GPIO 基址谜题解开（552），复位失败原因锁定为中断时序
 
 #### GPIO 基址（此前一直算错）
