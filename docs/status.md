@@ -102,6 +102,37 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 13:20 SPI 单次传输验证：MISO 空闲（0xFF）→ 芯片未上电/未复位
+
+把 `fts_writeRead()` 从两段式（写命令 → 单独读）改成**单次全双工**整包收发，并打印原始 rx。
+
+| 传输方式 | 读回结果 | 含义 |
+|---|---|---|
+| 两段式（原厂商实现）| `00 00 00 …` | 总线被拉低，非真实数据 |
+| 单次全双工（v150）| `ff ff ff …` | **MISO 空闲高电平**，从机完全没驱动 |
+
+结论：SPI 主机侧传输本身没问题（能发出、能收回），**从机（触控 IC）没有响应**。
+
+#### 已排除
+
+- 设备树 GPIO/phandle：实测正确（tlmm phandle 0x43，pin 25/24）
+- 电源轨选择：厂商 `avdd=pm8010m_l6`、`vdd=pm_humu_l12`，与 DTS 的 L6M/L12B 一致
+- 复位脚获取：descriptor 拿到成功（`NUWA_RST_DESC ok 1`）
+- pinctrl / regulator 缺失导致的失败：已改为可选并继续
+
+#### 剩余未知（下一步按序验证）
+
+1. **复位极性**：DTS 写的是 `GPIO_ACTIVE_LOW`，而 `GPIOD_OUT_HIGH` 表示逻辑高=物理低=**处于复位**。
+   需要确认厂商驱动期望的初始电平，可能在 probe 期间一直把芯片按在复位。
+2. **上电顺序**：VDDIO/VDD/AVDD 的先后与稳定延时（厂商驱动有 `fts_enable_reg` + 延时，需核对）
+3. **SPI 模式与片选**：厂商在 Android 下同为 12 MHz，但 CS 建立/保持时间可能不同
+4. 芯片是否真的在 SPI4 上（Android 侧可 `cat /proc/interrupts` 确认触摸中断计数）
+
+#### 本轮方法学收益（重要）
+
+现在有了完整闭环：串口 shell + 磁盘日志 + Android 离线取证 + 全自动重启循环，
+每次实验从「人工断电重刷」变成「一条命令 60 秒出结果」。
+
 ## 2026-11-01 13:05 触控大突破：串口复活 + 磁盘取证 + probe 走通到 SPI
 
 #### 1. 串口重新可用（根本性改善）
