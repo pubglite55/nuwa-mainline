@@ -102,6 +102,59 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 13:05 触控大突破：串口复活 + 磁盘取证 + probe 走通到 SPI
+
+#### 1. 串口重新可用（根本性改善）
+
+`/init` 里的悬空 `&&` 语法错误导致 PID 1 崩溃（`Attempted to kill init`），
+这才是 v130–v132「硬死机」的真因，**与触控驱动无关**。修好后 ACM 恢复正常：
+
+```
+COM5 115200 → nuwa login: → root / nuwa → root@nuwa:~#
+```
+
+#### 2. 建立两条可靠取证通道
+
+| 通道 | 方法 | 用途 |
+|---|---|---|
+| 串口 shell | `private/ser6.ps1 -Cmd "..."` | 实时命令、dmesg |
+| 磁盘日志 | `/init` 在挂载 rootfs 后 `dmesg > /var/log/nuwa-initramfs.log` | 崩溃前日志已落盘 |
+| 离线读取 | Android root 挂载 `/dev/block/by-name/linux` | 无任何在线通道时仍可取证 |
+
+#### 3. 全自动循环（不再是人工）
+
+```
+串口 systemctl reboot → adb reboot bootloader → fastboot boot <img> → 串口读日志
+```
+
+`private/cycle2.ps1 -Img <镜像>` 一条命令完成全部。
+
+#### 4. 触控 probe 逐段打通（v142 → v149）
+
+| 版本 | 修复 | 效果 |
+|---|---|---|
+| v142 | 错误路径 `fts_info=NULL` 且不 kfree | 消除 11s UAF 崩溃（`dead00000000012e`）|
+| v144 | GPIO 申请失败不中止 | 越过 STEP 6 |
+| v146 | 跳过 pinctrl 初始化 | 越过 STEP 8 |
+| v147 | probe 允许 `ts_pinctrl == NULL` | 进入 regulator/SPI |
+| v148 | 恢复 regulator（撤销 v123 的 NO_REG）| 芯片上电 |
+| v149 | reset 脚改用 `devm_gpiod_get(dev,"reset")` | 复位时序生效 |
+
+现在 probe 走到 **STEP 23**（读芯片 ID），但 `chip_id0/1 = 0x0`。
+
+#### 5. 遗留关键结论
+
+- 设备树**完全正确**：`fts,irq-gpio = <0x43 0x19 0x2008>`，tlmm phandle 实测 0x43
+- 厂商 `avdd=pm8010m_l6`、`vdd=pm_humu_l12`，与我们 DTS 的 L6M/L12B 一致
+- legacy `gpio_request()` 在本机对任何编号都返回 `-EPROBE_DEFER`（含正确编号）
+  → 必须用 descriptor API，不可用整数 GPIO
+- 已知硬件特性（此前主线调试所得）：**厂商驱动的两段式 SPI 读在本机返回空**，
+  只有单次全双工传输有效，数据从 index 2 开始 —— 这是 chip_id 全 0 的最可能原因
+
+#### 关键产物
+
+`other/abl-nuwa-v149-rst.img`（当前最新），`private/cycle2.ps1`、`private/ser6.ps1`
+
 ## 2026-11-01 02:50 无人值守闭环：panic 自动重启 + 自恢复二分脚本
 
 #### 关键改进：cmdline 加 `panic=10`
