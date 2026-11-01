@@ -102,6 +102,45 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 15:20 Android 对照取证：芯片与引脚都正常，问题在驱动电源/初始化
+
+#### Android 侧实测（真机取证）
+
+```
+/proc/interrupts:
+322:  601 ... msmgpio 25 Level xiaomi_tpfts     ← 同一引脚，计数 601，芯片正常上报
+
+regulator:
+pm8010m_l6 (AVDD)  = 3200 mV   enabled
+pm_humu_l12 (VDD)  = 1800 mV   enabled
+```
+
+⇒ **引脚 25、芯片、SPI 拓扑全部正确**；差别只在 Linux 侧的驱动初始化。
+
+#### 本轮发现并修复的真 bug
+
+早前为绕过 DT 解析问题，在硬编码块里写了：
+
+```c
+bdata->avdd_reg_name = NULL;
+bdata->vdd_reg_name  = NULL;
+```
+
+后果：`fts_enable_reg()` 拿不到 regulator → **从不使能 AVDD/VDD**，芯片实际没电。
+已改回 `"avdd"` / `"vdd"`（v162），日志确认 `pwr_reg_name = avdd` / `bus_reg_name = vdd`。
+
+#### 仍未解决
+
+- `System resetting... → 超时`，`chip_id = 0x0`，`Probe Failed`
+- `NUWA_AVDD_3200` 的打印没出现 ⇒ 该分支未执行，需确认 `fts_enable_reg()` 是否真被调用
+- 我们的 AVDD 实测 3008 mV，Android 为 3200 mV
+
+#### 下一步
+
+1. 在 `fts_enable_reg()` 入口加日志，确认是否被调用、`avdd_reg` 是否为 NULL
+2. 若为 NULL，检查 `regulator_get` 的名字映射（`avdd-supply` ↔ `"avdd"`）
+3. 电源确认使能后，复位应能收到 INT（Android 证明可行）
+
 ## 2026-11-01 14:50 中断前置已生效，但芯片从不拉 INT；电源电压值可疑
 
 #### v159 结果
