@@ -102,6 +102,51 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 14:35 触控 v142→v157：链路通、复位极性修正、中断修好，卡在引脚未被应用
+
+#### 本轮关键修复（按顺序，每次一个变量）
+
+| 版本 | 改动 | 结果 |
+|---|---|---|
+| v142 | probe 错误路径 `fts_info = NULL` 且不 kfree | 消除 11s UAF 崩溃 |
+| v144 | GPIO 申请失败不中止 | 越过 STEP 6 |
+| v146/147 | pinctrl 允许缺失 | 越过 STEP 8 |
+| v148 | 恢复 regulator（撤 v123 的 NO_REG）| 芯片上电 |
+| v149 | reset 脚改 `devm_gpiod_get(dev,"reset")` | 复位脚可控 |
+| **v151** | **DTS `reset-gpios` 改 `GPIO_ACTIVE_HIGH`** | **SPI 从 `ff ff ff` 变 `00 87 ..`（芯片回显）** |
+| **v154** | **不再用 `gpio_to_irq(gpio)` 覆盖 `client->irq`** | **IRQ 有效（213）** |
+| v155 | 撤销单段全双工，恢复两段式读 | 与主线 `st-ftm5.c` 注释一致 |
+| v156/157 | DTS 补 pinctrl 状态名 `pmx_ts_active/pmx_ts_suspend` | pinctrl 初始化不再失败 |
+
+#### 关键判断修正（重要）
+
+主线 `st-ftm5.c` 的注释明确指出：**两段式才是本芯片的正确帧格式**，
+单段全双工会读回自己的 MOSI 回显。此前「单次全双工」的结论是错的，已撤销。
+
+#### 当前卡点
+
+```
+pin 24 (GPIO_24):        ← pinconf 为空，引脚未被配置
+pin 25 (GPIO_25):        ←
+/proc/interrupts 无 213   ← 中断未注册（probe 未走到 install）
+System resetting... → 失败 → 走 chip_id 兜底 → 0x0 → Probe Failed
+```
+
+即：pinctrl 状态查找已通过，但 `pinctrl_select_state()` 没真正把 `mi_ts_active`
+（gpio24/gpio25, function="gpio", pull-up）应用到硬件上。
+
+#### 下一步（按优先级）
+
+1. 确认 tlmm 是否提供 `gpio` function：`cat /sys/kernel/debug/pinctrl/f100000.pinctrl/functions`
+2. 若没有，改用 `qcom,tlmm-sm8550` 的默认 function 名（如 `gpio`/`normal`）或直接 `bias-pull-up` 而不写 function
+3. 引脚生效后，`fts_system_reset()` 应能收到 IRQ 213 的 READY 事件，chip_id 才可能读对
+4. 备用验证：用 `devmem` 直接读 tlmm 寄存器确认 pin24/25 的 mux/config 是否被写入
+
+#### 方法学
+
+全部实验现已自动闭环：串口 shell + 磁盘日志 + `private/cycle2.ps1`（重启→adb→fastboot→启动→读日志）。
+单轮迭代约 60 秒，无需人工干预。
+
 ## 2026-11-01 13:28 触控 SPI 打通：复位极性是最后一个开关
 
 #### 根因
