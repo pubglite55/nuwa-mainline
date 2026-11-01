@@ -102,6 +102,39 @@ cycle.ps1 -Image other\abl-nuwa-v94-wifimod.img -Rootfs other\nuwa-rootfs-mod.si
 2. 对照 `fts_probe` 里第 N 个赋值语句，看是哪一步（大概率是 regulator/pinctrl/固件加载）
 3. 补齐 DT 属性或加保护后重试
 
+## 2026-11-01 14:45 触控：GPIO 基址谜题解开（552），复位失败原因锁定为中断时序
+
+#### GPIO 基址（此前一直算错）
+
+`/sys/kernel/debug/pinctrl/f100000.pinctrl/pinmux-pins` 给出实证：
+
+```
+pin 24 (GPIO_24): GPIO f100000.pinctrl:576
+pin 25 (GPIO_25): UNCLAIMED
+```
+
+⇒ tlmm 全局基址 = 552，**irq(25)=577，reset(24)=576**。
+之前按 debugfs 列表序号算出的 40/65 是错的（那只是芯片枚举顺序，不是 base）。
+改正后 `gpio_request` 不再报错，引脚被成功 claim。
+
+#### 复位失败的新结论
+
+代码顺序（`fts.c`）：
+
+```
+5061: error = fts_system_reset();      ← 等 EVT_ID_CONTROLLER_READY 完成量
+5230: error |= fts_interrupt_install(info);   ← 中断才在这里注册
+```
+
+复位靠 IRQ 上报 READY 事件来唤醒 completion，但此时中断尚未安装，
+所以 `fts_system_reset()` 必然超时（实测 0.45s），随后走 chip_id 兜底并失败。
+
+#### 下一步（明确）
+
+1. 把 `fts_interrupt_install()` 移到 `fts_system_reset()` 之前（或复位前先 `request_threaded_irq`）
+2. 若仍不行，改为轮询 FIFO 判断 READY（不依赖中断）
+3. chip_id 读通后，固件下载 `st_fts_m2.ftb` 应可继续，之后进入出点验证
+
 ## 2026-11-01 14:35 触控 v142→v157：链路通、复位极性修正、中断修好，卡在引脚未被应用
 
 #### 本轮关键修复（按顺序，每次一个变量）
